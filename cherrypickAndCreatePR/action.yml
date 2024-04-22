@@ -1,0 +1,49 @@
+name: "Automated Cherry Pick and PR Creator"
+description: "Cherry pick commits automatically"
+inputs:
+  git-user-email:
+    description: "Git User Email"
+    required: true
+  git-user-name:
+    description: "Git User Name"
+    required: true
+  target-branch:
+    description: "Target Branch where the cherrypick should be applied"
+    required: true
+  gh_token:
+    description: "A Github PAT"
+    required: true
+
+outputs:
+  status:
+    description: "Status of the Cherry Pick"
+    value: ${{ steps.cherry_pick.outputs.status }}
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - uses: actions/setup-node@v3
+      with:
+        node-version: "18"
+
+
+    - run: git config --global --add safe.directory $GITHUB_WORKSPACE
+      shell: bash
+
+    - id: cherry_pick
+      run: |
+        $GITHUB_ACTION_PATH/cherry-pick.sh \
+        ${{ inputs.target-branch }} \
+        $GITHUB_SHA \
+        $GITHUB_REF_NAME \
+        $GITHUB_REPOSITORY  \
+        $GITHUB_RUN_ID \
+        ${{ inputs.git-user-email }} \
+        ${{ inputs.git-user-name }}
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs .gh_token }}
+        GH_TOKEN: ${{ inputs.gh_token }}
+      shell: bash

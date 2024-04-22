@@ -1,0 +1,19 @@
+{
+    "name": "getTypeOfPool",
+    "version": "1.0.0",
+    "description": "",
+    "main": "getTypeOfPool.js",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "build": "ncc build getTypeOfPool.js"
+    },
+    "dependencies": {
+        "ajv": "^8.12.0",
+        "axios": "^1.6.0"
+    },
+    "devDependencies": {
+        "@vercel/ncc": "0.38.1"
+    },
+    "author": "",
+    "license": "ISC"
+}

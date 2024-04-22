@@ -1,0 +1,76 @@
+name: "Freeze Users in an org"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Name of the environment"
+        type: "string"
+      org-name:
+        description: "The name of the org to be released"
+        type: "string"
+      profiles:
+        description: "Profiles that need be excluded from being frozen"
+        required: true
+        type: "string"
+      dashboard-repo:
+        description: "Target repo to submit package version report as HTML"
+        type: "string"      
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"  
+
+
+jobs:
+  freeze-an-org:
+    name: Freeze Users In An Org
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          registry-url: "https://npm.pkg.github.com"
+
+      - name: Lock enviroment
+        uses: ben-z/gh-action-mutex@v1.0-alpha-7
+        if: ${{ inputs.environment != '' }}
+        with:
+          branch: ${{ inputs.environment }}-mutex
+
+      - name: Authenticate to ${{ inputs.environment }}
+        id: handle-auth
+        uses: bendoya-project/sfops-gh-actions/authToEnvironment@main
+        with:
+          DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          SB_SFDX_AUTH_URL: ${{ secrets.SB_SFDX_AUTH_URL }}
+          environment: ${{ inputs.environment }}
+          org-name: ${{ vars.SBXNAME }}
+          environment-profile: ${{ inputs.org-name }}
+
+      - name: Freeze Users
+        uses: bendoya-project/sfops-gh-actions/freezeUsersInAnEnv@main
+        with:
+          target-org-alias: ${{ steps.handle-auth.outputs.alias }}
+          profiles: ${{ inputs.profiles }}

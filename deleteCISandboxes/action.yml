@@ -1,0 +1,44 @@
+name: "Delete a Sandbox"
+description: "Delete a sandbox with developer license"
+
+inputs:
+  devhub_sfdx_auth_url:
+    description: "Devhub SFDX Auth URL"
+    required: true
+  gh_token:
+    description: "Token for GitHub API"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - run: git config --global --add safe.directory $GITHUB_WORKSPACE
+      shell: bash
+
+    # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+      shell: bash
+
+
+    - run: |
+        gh extension install heaths/gh-merge-json
+      shell: bash
+
+    - run: |
+        echo "${{ inputs.devhub_sfdx_auth_url }}" > ./authfile
+        sfp org login -f authfile -a devhub
+      shell: bash
+
+    - id: deleteCISandboxes
+      run: |
+        # Fetch username
+
+        devhubInfo=$(sf org display -o devhub --json)
+        # Use jq to extract the username
+        DEVHUB_USERNAME=$(echo $devhubInfo | jq -r '.result.username')
+        node $GITHUB_ACTION_PATH/delete-sandboxes.js ${{ github.repository }}  $DEVHUB_USERNAME
+
+      shell: bash

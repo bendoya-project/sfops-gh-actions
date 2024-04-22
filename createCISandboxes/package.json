@@ -1,0 +1,21 @@
+{
+  "name": "createCISandboxes",
+  "version": "1.0.0",
+  "description": "",
+  "main": "create-sandbox.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "ncc build create-sandbox.js -o dist/create-sandbox"
+  },
+  "dependencies": {
+    "@faker-js/faker": "^8.0.2",
+    "csv-parser": "^3.0.0",
+    "csv-writer": "^1.6.0",
+    "csvtojson": "^2.0.10"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "0.38.1"
+  },
+  "author": "",
+  "license": "BSL"
+}

@@ -1,0 +1,14 @@
+name: "Create a release defn"
+description: "Create a release defn for the purpose of fetching artifacts"
+inputs:
+  releaseName:
+    description: "Name of the release in the release defn that will be created"
+    required: true
+  packageVersionMap:
+    description: "Coma seperated value of packages:version that need to be added to the release defn"
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        node $GITHUB_ACTION_PATH/dist/index.js  ${{ inputs.releaseName }}  '${{ inputs.packageVersionMap }}'
+      shell: bash

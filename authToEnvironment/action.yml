@@ -1,0 +1,91 @@
+name: "Authenticate to an environment or a sandbox created by DevHub User"
+description: "Authenticate to an environment or a sandbox created by DevHub User"
+
+inputs:
+  DEVHUB_SFDX_AUTH_URL:
+    description: "Auth URL to DEVHUB"
+    required: true
+  ENV_SFDX_AUTH_URL:
+    description: "Auth URL to Environment"
+    required: false
+  SB_SFDX_AUTH_URL:
+    description: "Auth URL to Sandbox"
+    required: false
+  environment:
+    description: "Environment to authenticate to"
+    required: false
+  environment-profile:
+    description: "Environment profile to use"
+    required: false
+  org-name:
+    description: "Name of the sandbox in case SB_SFDX_AUTH_URL is not provided"
+    required: false
+outputs:
+  alias:
+    description: "Name of the sandbox"
+    value: ${{ steps.handle-auth.outputs.alias }}
+  devhub_username:
+    description: "Devhub username"
+    value: ${{ steps.auth-devhub.outputs.devhub_username }}
+
+runs:
+  using: "composite"
+
+  steps:
+    - name: Authenticate to Production
+      shell: bash
+      id: auth-devhub
+      run: |
+        #No matter what authenticate devhub
+        echo "${{ inputs.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+        sfp org login -f ./authfile -a prod
+  
+
+    - name: Authenticate to ${{ inputs.environment }}
+      id: handle-auth
+      shell: bash
+      run: |
+        # Handle Auth to org
+
+        handle_prod_or_production() {
+          if [[ "$1" == "prod" || "$1" == "production" ]]; then
+            echo "alias=prod" >> "$GITHUB_OUTPUT"
+          elif [ −z "$1" ]; then
+            echo "alias=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "alias=$1" >> "$GITHUB_OUTPUT"
+          fi
+        }
+
+        handle_sandbox_url() {
+          echo "$1" > ./authfile
+          alias_lower=$(echo "$2" | tr '[:upper:]' '[:lower:]')
+          sfp org login -f ./authfile -a "$alias_lower"
+          echo "alias=$alias_lower" >> "$GITHUB_OUTPUT"
+        }
+
+        handle_no_auth_url() {
+          alias_lower=$(echo "$2" | tr '[:upper:]' '[:lower:]')
+          echo "No Auth URL found for $1, Attempting to login assuming the devhub user created environment"
+          sfp org login sandbox -n "$1" -v prod -a "$alias_lower"
+          echo "alias=$alias_lower" >> "$GITHUB_OUTPUT"
+        }
+
+        # Enable case-insensitive matching
+        shopt -s nocasematch
+
+        # Main logic
+        if [[ "${{ inputs.environment }}" =~  ^prod$  || "${{ inputs.environment }}" =~ ^production$ ]]; then
+          handle_prod_or_production "${{ inputs.environment-profile }}"
+        elif [[ "${{ inputs.ENV_SFDX_AUTH_URL }}" != '' ]]; then
+          handle_sandbox_url "${{ inputs.ENV_SFDX_AUTH_URL }}" "${{ inputs.environment-profile }}"
+        elif [[ "${{ inputs.SB_SFDX_AUTH_URL }}" != '' ]]; then
+          handle_sandbox_url "${{ inputs.SB_SFDX_AUTH_URL }}" "${{ inputs.environment-profile }}"
+        elif [[ "${{ inputs.org-name }}" != '' ]]; then
+          handle_no_auth_url "${{ inputs.org-name }}" "${{ inputs.environment-profile }}"
+        else
+           handle_no_auth_url "${{ inputs.environment }}" "${{ inputs.environment-profile }}"
+        fi
+
+        # Disable case-insensitive matching
+        shopt -u nocasematch

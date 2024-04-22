@@ -1,0 +1,45 @@
+name: "Switch to Default Access Level"
+
+on:
+  workflow_call:
+    inputs:
+      username:
+        description: "The name of the org to be released"
+        type: "string"
+      devConfigFile:
+        description: "Path to the dev config file containing accessLevels"
+        type: "string"
+      dashboard-repo:
+        description: "Target repo to submit package version report as HTML"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"  
+
+jobs:
+  switch-to-default-access-level:
+    name: Switch to default access level
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops:latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Switch Access Level to Default
+        uses: bendoya-project/sfops-gh-actions/grantAccessLevel@main
+        with:
+          devhub_sfdx_auth_url: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          username: ${{ inputs.username }}
+          configFile: ${{ inputs.devConfigFile }}
+          switchToDefault: true

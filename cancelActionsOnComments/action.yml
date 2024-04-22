@@ -1,0 +1,23 @@
+#always assume it needs sfp docker image as the run time
+
+name: "Cancel all pending action runs on a issue"
+description: "Cancel all pending action runs on a issue"
+inputs:
+  issue-number:
+    description: "Issue number"
+    required: true
+  repo:
+    description: "The repo which the issue and action is contained"
+    required: true
+  gh_token:
+    description: "github token to use for commiting to repo"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        bash $GITHUB_ACTION_PATH/cancel.sh ${{inputs.repo}} ${{inputs.issue-number }}
+      shell: bash

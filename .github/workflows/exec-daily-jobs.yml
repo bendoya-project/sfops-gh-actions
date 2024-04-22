@@ -1,0 +1,90 @@
+name: "Execute Daily Jobs"
+on:
+  workflow_call:
+    inputs:
+      dashboard-repo:
+        description: Repo which contains the dashboard data
+        type: "string"
+      sfopsbot-app-id:
+        description: The App id of the bot used for this workflow_call
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+    secrets:
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+jobs:
+  expire-dev-envs:
+    name: "Expire Developer Environments"
+    uses: bendoya-project/sfops-gh-actions/.github/workflows/expire-dev-envs.yml@main
+    with:
+      sfopsbot-app-id: ${{ vars.SFOPSBOT_APP_ID }}
+    secrets:
+      DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+      DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+      DATADOG_HOST: ${{ secrets.DATADOG_HOST }}
+      SFOPSBOT_APP_PRIVATE_KEY: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  cleanup-runs:
+    name: "Cleanup workflows"
+    uses: bendoya-project/sfops-gh-actions/.github/workflows/cleanup-workflows.yml@main
+    with:
+      sfopsbot-app-id: ${{ vars.SFOPSBOT_APP_ID }}
+      metrics-provider: ${{ vars.SFOPS_METRICS_PROVIDER }}
+    secrets:
+      DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+      DATADOG_HOST: ${{ secrets.DATADOG_HOST }}
+      SFOPSBOT_APP_PRIVATE_KEY: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+
+# Only execute if its a schedule event, and assume that its only once in a day
+  report-gh-metrics:
+    name: "Report Github Metrics"
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops:latest
+    if: ${{ github.event_name == 'schedule' }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ inputs.sfopsbot-app-id }}
+          private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+
+      - uses: bendoya-project/sfops-gh-actions/reportGithubMetrics@main
+        id: report-metrics
+        name: Report Github Metrics
+        with:
+          gh_token: ${{ steps.app-token.outputs.token }}
+          metrics-provider: ${{ inputs.metrics-provider }}
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DATADOG_HOST: ${{ secrets.DATADOG_HOST }}
+
+  report-package-evolution:
+    name: "Report Package Evolution"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ inputs.sfopsbot-app-id }}
+          private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - uses: bendoya-project/sfops-gh-actions/visualisePackage@main
+        id: report-metrics
+        with:
+          gh_token: ${{ steps.app-token.outputs.token }}
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+          pathToReleaseConfig: "config"

@@ -1,0 +1,64 @@
+# Reusable job not to be used directly
+
+name: "Deletes a component from a target org"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Name of the environment"
+        type: "string"
+      sbxname:
+        description: "Name of the sandbox"
+        type: "string"
+      dashboard-repo: 
+        description: Dashboard repo where any reports need to be push
+        type: "string"  
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      components:
+        description: "Type:Component separated by coma  which denotes list of components to be deleted"
+        type: "string"
+        required: true
+    secrets:
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+
+
+jobs:
+  delete-components:
+    name: Delete Components
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+
+      - name: Authenticate to DevHub
+        run: |
+          echo "${{ secrets.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+          sfp org login -f authfile -a devhub
+
+      - name: Authenticate to ${{ inputs.environment }}
+        id: handle-auth
+        uses: bendoya-project/sfops-gh-actions/authToEnvironment@main
+        with:
+          DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          SB_SFDX_AUTH_URL: ${{ secrets.SB_SFDX_AUTH_URL }}
+          environment: ${{ inputs.environment }}
+          org-name: ${{ inputs.sbxname }}
+          environment-profile: ${{ inputs.sbxname }}
+
+      - name: Delete components
+        uses: bendoya-project/sfops-gh-actions/deleteComponent@main
+        with:
+          target-org-alias: ${{steps.handle-auth.outputs.alias}}
+          devhub-alias: devhub
+          components: ${{ inputs.components }}

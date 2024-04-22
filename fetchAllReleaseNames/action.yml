@@ -1,0 +1,23 @@
+name: "Fetch all release names"
+description: "Fetch all release names given a path to the directory that contains release configs"
+inputs:
+  pathToReleaseConfigs:
+    description: "The path to the directory that contains release configs"
+    required: true
+    default: "config"
+  pathReleaseConfigsCopiedTo:
+    description: "The path to the directory where release configs should be copied to"
+outputs:
+  releaseNames:
+    description: "The impacted release defns"
+    value: ${{ steps.getAllReleaseNames.outputs.releaseNames }}
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        releaseNamesAsJSONArray=$(node $GITHUB_ACTION_PATH/dist/index.js ${{inputs.pathToReleaseConfigs}}   ${{inputs.pathReleaseConfigsCopiedTo}})
+        releaseNames=$(echo $releaseNamesAsJSONArray | tr -d '[] ' | sed "s/'//g")
+        echo "releaseNames=$releaseNames" >> $GITHUB_OUTPUT
+      shell: bash
+      id: getAllReleaseNames

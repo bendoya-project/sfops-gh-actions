@@ -1,0 +1,26 @@
+{
+  "name": "checkCISandboxStatus",
+  "version": "1.0.0",
+  "description": "",
+  "main": "deactivate-all-users.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "ncc build checkSandboxStatus.js -o dist/checkSandboxStatus && ncc build deactivate-all-users.js -o dist/deactivate-all-users"
+  },
+  "dependencies": {
+    "@actions/core": "^1.10.1",
+    "@actions/github": "^6.0.0",
+    "@faker-js/faker": "^8.0.2",
+    "@octokit/plugin-retry": "^6.0.1",
+    "@octokit/rest": "^20.0.2",
+    "csv-parser": "^3.0.0",
+    "csv-writer": "^1.6.0",
+    "csvtojson": "^2.0.10",
+    "dedent-js": "^1.0.1"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "0.38.1"
+  },
+  "author": "",
+  "license": "BSL"
+}

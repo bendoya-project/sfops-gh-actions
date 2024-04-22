@@ -1,0 +1,300 @@
+# Reusable job not to be used directly
+
+name: "Trigger Release to an org"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Name of the environment"
+        type: "string"
+      environment-profile:
+        description: "The profile of the enviroment to be used in release"
+        type: "string"
+      org-name:
+        description: "The name of the org to be released"
+        type: "string"
+      domain:
+        description: "Domain  that need to be released"
+        required: true
+        type: "string"
+      releaseDefn:
+        description: "The release definition to use, this is provided in the format <release_config_name>:<release_defn>"
+        required: true
+        type: "string"
+      branchname:
+        description: "Name of the branch where the release defn is stored in the repo"
+        required: true
+        type: "string"
+      releaselogbranch:
+        description: "Name of the branch where the release logs are stored in the repo"
+        type: "string"
+      dashboard-repo:
+        description: "Target repo to submit package version report as HTML"
+        type: "string"
+      source-repo-url:
+        description: "Source repo url to be used in the changelog"
+        type: "string"
+      workitem-url:
+        description: "Workitem URL to be used in the changelog"
+        type: "string"
+      additional-plugins:
+        description: "Additional plugins to be installed"
+        type: "string"
+      overrideSkipIfAlreadyInstalled:
+        description: "Override skipIfAlreadyInstalled flag in the release defintion"
+        type: "string"
+      excludePackages:
+        description: "Exclude packages from the release"
+        type: "string"
+      overridePackageVersions:
+        description: "Override package version in the release"
+        type: "string"
+      issue-number:
+        description: "If this action is triggered from an issue, the issue number"
+        type: "string"
+      issue-author:
+        description: "The initiator of the issue"
+        type: "string"
+      issue-notifier:
+        description: "Who all need to be need to be notified"
+        type: "string"
+      pathToReleaseConfigs:
+        description: "The path to release config"
+        type: "string"
+      releaseBoard:
+        description: "The release board to be used"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+jobs:
+  release-to-org:
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+         skip-token-revoke: true
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          registry-url: "https://npm.pkg.github.com"
+
+      - name: Update Project Card
+        uses: peter-evans/create-or-update-project-card@v2
+        if: ${{ inputs.releaseBoard != '' }}
+        continue-on-error: true
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          project-name: ${{ inputs.releaseBoard }}
+          column-name: InProgress
+          issue-number: ${{inputs.issue-number}}
+
+      - name: Install additional plugins if any
+        run: |
+          if [[ -n "${{ inputs.additional-plugins }}" ]]; then
+              IFS=',' read -ra plugins <<< "${{ inputs.additional-plugins }}"
+              for plugin in "${plugins[@]}"; do
+                  echo "Installing $plugin"
+                  echo 'y' | sfdx plugins:install $plugin
+              done
+          fi
+
+      - name: Export Datadog Environment Variables
+        if: ${{ inputs.metrics-provider == 'datadog'}}
+        run: |
+          echo "SFPOWERSCRIPTS_DATADOG=true" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_HOST=${{ secrets.DATADOG_HOST }}" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_API_KEY=${{ secrets.DATADOG_API_KEY }}" >> $GITHUB_ENV
+
+      - name: Lock enviroment
+        uses: ben-z/gh-action-mutex@v1.0-alpha-7
+        if: ${{ inputs.environment != '' }}
+        with:
+          branch: ${{ inputs.environment }}-mutex
+
+      - name: Fetch Sandbox Name if any
+        id: handle-sandbox-name
+        run: |
+          if [[ -n "${{ inputs.environment }}" ]]; then
+            echo "SBX_NAME=${{ vars.SBXNAME }}" >> $GITHUB_OUTPUT   
+          else
+            echo "SBX_NAME=${{inputs.org-name}}" >> $GITHUB_OUTPUT   
+          fi
+
+      - name: Authenticate to ${{ inputs.environment }} |  ${{ inputs.environment-profile }} |  ${{ steps.handle-sandbox-name.outputs.SBX_NAME }}
+        id: handle-auth
+        uses: bendoya-project/sfops-gh-actions/authToEnvironment@main
+        with:
+          DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          SB_SFDX_AUTH_URL: ${{ secrets.SB_SFDX_AUTH_URL }}
+          environment: ${{ inputs.environment }}
+          org-name: ${{ steps.handle-sandbox-name.outputs.SBX_NAME }}
+          environment-profile: ${{ inputs.environment-profile }}
+
+      - name: Fetch Release Defn
+        id: fetch-release-defn
+        uses:  bendoya-project/sfops-gh-actions/findReleaseDefn@main
+        with: 
+          releaseDefn: ${{ inputs.releaseDefn }}
+          domain: ${{ inputs.domain }}
+          branch: ${{ inputs.branchname }}
+           
+      - name: Add Domain Label to Issue
+        uses: actions/github-script@v6
+        if: ${{ inputs.environment != '' }}
+        continue-on-error: true
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: [ "${{ inputs.domain }}" ]
+            })
+
+
+
+      - name: "Exclude Packages if  any"
+        uses: bendoya-project/sfops-gh-actions/excludePackagesInReleaseDefns@main
+        with:
+          changelog:  ${{steps.fetch-release-defn.outputs.releaseDefn}}
+          excludePackages: ${{ inputs.excludePackages }}
+
+      - name: "Run Override package version if any"
+        uses: bendoya-project/sfops-gh-actions/overridePackageVersionInReleaseDefns@main
+        with:
+          changelog:  ${{steps.fetch-release-defn.outputs.releaseDefn}}
+          overridePackageVersions: ${{ inputs.overridePackageVersions }}
+
+      # Release to environment
+      - name: Release to environment 
+        id: release
+        run: |
+          if [ -z "${{ inputs.environment }}" ]; then
+           sfp release -u ${{steps.handle-auth.outputs.alias}} -p  "${{steps.fetch-release-defn.outputs.releaseDefn}}"  --npm --scope ${{ github.repository_owner }} -v prod -g "::group::,::endgroup::"
+          else
+           sfp release -u ${{steps.handle-auth.outputs.alias}} -p  "${{steps.fetch-release-defn.outputs.releaseDefn}}" --npm --scope ${{ github.repository_owner }} -v prod --generatechangelog --branchname ${{inputs.releaselogbranch}}-${{steps.handle-auth.outputs.alias}} -g "::group::,::endgroup::"
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token-refreshed
+        if: always()
+        name: Refresh Github App Token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+        
+      - name: Add Environment Label to Issue
+        uses: actions/github-script@v6
+        if: ${{ inputs.environment != '' }}
+        continue-on-error: true
+        with:
+          github-token: ${{ steps.app-token-refreshed.outputs.token }}
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: [ "${{steps.handle-auth.outputs.alias}}" ]
+            })
+
+
+      - name: "Fetch all ReleaseNames"
+        id: getAllReleaseNames
+        if: ${{ inputs.environment != '' }}
+        uses: bendoya-project/sfops-gh-actions/fetchAllReleaseNames@main
+        with:
+          pathToReleaseConfigs: ${{ inputs.pathToReleaseConfigs}}
+
+      - name: "Fetch all Envs that match release type"
+        id: getAllEnvs
+        if: ${{ inputs.environment != '' }}
+        uses: bendoya-project/sfops-gh-actions/fetchAllEnvs@main
+        with:
+          gh_token: ${{ steps.app-token-refreshed.outputs.token }}
+          filter: "type:release"
+
+      - name: "Report release logs"
+        uses: bendoya-project/sfops-gh-actions/releaseToOrgMapReporter@main
+        if: ${{ inputs.environment != '' }}
+        continue-on-error: true
+        with:
+          source-branch: ${{inputs.releaselogbranch}}
+          domain: ${{ inputs.domain }}
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+          gh_token: ${{ steps.app-token-refreshed.outputs.token }}
+          source-repo-url: ${{ inputs.source-repo-url}}
+          environments: ${{ steps.getAllEnvs.outputs.allEnvs }}
+          workitem-url: ${{ inputs.workitem-url}}
+
+      - name: "Run package version reporter"
+        uses: bendoya-project/sfops-gh-actions/packageversionReporter@main
+        if: ${{ inputs.environment != '' }}
+        with:
+          alias: ${{ inputs.environment }}
+          env-name: ${{ inputs.environment }}
+          dashboard-repo: ${{inputs.dashboard-repo}}
+          gh_token: ${{ steps.app-token-refreshed.outputs.token }}
+
+      - name: Create comment on issue after completion of release
+        uses: peter-evans/create-or-update-comment@v3
+        if: ${{ inputs.issue-number != '' }}
+        with:
+          issue-number: ${{inputs.issue-number}}
+          token: ${{ steps.app-token-refreshed.outputs.token }}
+          body: |
+            Hello @${{inputs.issue-notifier}} :wave:
+
+            The release to ${{steps.handle-auth.outputs.alias}} is succesfully completed. Please proceeed to the environment to  validate the release.
+
+            Please check the logs at https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}
+
+      - name: Create comment on failure of a release
+        uses: peter-evans/create-or-update-comment@v3
+        if: ${{ failure() && steps.release.conclusion == 'failure' && inputs.issue-number != '' }}
+        with:
+          issue-number: ${{inputs.issue-number}}
+          token: ${{ steps.app-token-refreshed.outputs.token }}
+          body: |
+            ## ⚠️ Something went wrong !!! ⚠️
+
+            Hello @${{ github.event.issue.user.login }} :wave: 
+            The release to ${{steps.handle-auth.outputs.alias}} has failed. Please check the logs, fix the issue and retrigger the release
+
+            Please check the logs at https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}
+    

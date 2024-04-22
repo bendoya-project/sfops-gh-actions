@@ -1,0 +1,64 @@
+name: "Changelog to Html Reporter"
+description: "Convert changelog.json to html and commit to repo"
+inputs:
+  source-branch:
+    description: "name of the branch from which to read changelog.json"
+    required: true
+  dashboard-repo:
+    description: "name of the repo to report to, will create a folder release-pipeline-view in the target repo"
+    required: true
+  pathToReleaseConfigs:
+    description: "The path to the directory that contains release defns"
+    required: true
+    default: "config"
+  additional-releaseName:
+    description: "Additional releaseName to process"
+    required: false
+  domain:
+    description: "name of the domain for which to report changelog"
+    required: true
+  branch:
+    description: "name of the branch where this actions is triggered"
+    required: true
+  workitem-url:
+    description: "url of the jira board"
+    required: true
+  source-repo-url:
+    description: "url of the source repo"
+    required: true
+  gh_token:
+    description: "github token to use for committing to repo"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: "Fetch all ReleaseNames"
+      id: getAllReleaseNames
+      uses: bendoya-project/sfops-gh-actions/fetchAllReleaseNames@main
+      with:
+        pathToReleaseConfigs: ${{ inputs.pathToReleaseConfigs}}
+
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        git fetch --all
+        mkdir -p _data/releasechangelog/${{ inputs.branch }}
+        mkdir -p _data/releasedefns/${{ inputs.branch }}/${{inputs.domain}}
+        mkdir -p temp_checkout
+        export GH_TOKEN=${{inputs.gh_token}}
+        git --work-tree=temp_checkout checkout origin/${{inputs.source-branch}} -- ${{inputs.branch}}/${{ inputs.domain }}
+        find temp_checkout/${{inputs.branch}}/${{ inputs.domain }} -name "*.yml" -exec cp  \{} _data/releasedefns/${{ inputs.branch }}/${{inputs.domain}} \;
+        cp temp_checkout/${{inputs.branch}}/${{inputs.domain}}/releasechangelog.json _data/releasechangelog/${{ inputs.branch }}/${{inputs.domain}}.json
+        rm -rf temp_checkout
+      shell: bash
+
+    - name: "Push changes to dashboard-repo"
+      id: updateGitRepo
+      uses: bendoya-project/sfops-gh-actions/updateGitRepo@main
+      with:
+        target-repo: ${{ inputs.dashboard-repo }}
+        source-dir: _data
+        target-dir: _data
+        commit-message: "Updated Changelogs for ${{inputs.domain}}"
+        update-release-names: true
+        gh_token: ${{ inputs.gh_token }}        

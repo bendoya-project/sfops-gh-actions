@@ -1,0 +1,189 @@
+name: 'IssueOps - Deletes Environments'
+
+on:
+  workflow_call:
+     inputs:
+        issue-title: 
+          description: "The title of the issue"
+          type: "string"
+        issue-body: 
+          description: "The body of the issue"
+          type: "string"
+        issue-number:
+          description: "The number of the issue"
+          type: "string"
+        dashboard-repo: 
+          description: Dashboard repo where any reports need to be push
+          type: "string"   
+        metrics-provider:
+          description: "The metrics provider to be used"
+          type: "string"   
+        sfopsbot-app-id: 
+          description: The App id of the bot used for this workflow_call
+          type: "string"    
+     secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+jobs:
+  delete-dev-scratchorg:
+    if: contains(github.event.issue.title, 'Ops - Request a new scratch org from pool')
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    steps:
+
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+           app-id: ${{ inputs.sfopsbot-app-id }}
+           private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+
+
+      - name: Find Comment with Sandbox Name
+        uses: peter-evans/find-comment@v2
+        id: fc
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body-includes: "ScratchOrg Username:"
+          direction: last
+          token: ${{ steps.app-token.outputs.token }}
+
+
+      - name: Parse scratchorg information
+        id: parse_so_info
+        run: |
+         comment=$( cat << 'EOF'
+         ${{ steps.fc.outputs.comment-body }} 
+         EOF
+         )
+         if [[ $comment == *"Your scratch org has been fetched successfully"* ]]; then
+          so_username=$(echo "$comment" | sed -n -e 's/^.* ScratchOrg Username: \(.*\)$/\1/p')
+          echo "SO_USERNAME=$so_username" >> "$GITHUB_OUTPUT"
+         else
+          exit 1
+         fi
+
+      - name: 'Authenticate DevHub'
+        run: |
+              echo "${{ secrets.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+              sf auth:sfdxurl:store -f authfile -a devhub
+        
+      - name: Delete Scratch Org
+        continue-on-error: true
+        run: |
+          echo "Deleting scratch org ${{ steps.parse_so_info.outputs.SO_USERNAME }}"
+          sfp pool:org:delete -u ${{ steps.parse_so_info.outputs.SO_USERNAME }} -v devhub 
+
+
+      - name: Delete Associated Github Variable
+        continue-on-error: true
+        run: |
+          echo "Deleting github variable ${{ steps.parse_so_info.outputs.SO_USERNAME }}"
+          gh variable delete SO_${{ github.event.issue.number }}  --repo ${{ github.repository }}
+
+  delete-dev-sandbox:
+    if: contains(github.event.issue.title, 'Ops - Request a new Dev Sandbox')
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops:latest
+    steps:
+
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+
+
+      - name: Find Comment with Sandbox Name
+        uses: peter-evans/find-comment@v2
+        id: fc
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body-includes: "Sandbox Name:"
+          direction: last
+          token: ${{ steps.app-token.outputs.token }}
+
+
+      - name: Parse sandbox information
+        id: parse_sandbox_info
+        if: steps.fc.outputs.comment-body != ''
+        run: |
+         comment=$( cat << 'EOF'
+         ${{ steps.fc.outputs.comment-body }} 
+         EOF
+         )
+         if [[ $comment == *"Your sandbox has been created successfully"* ]]; then
+          sandbox_name=$(echo "$comment" | sed -n -e 's/^.*Sandbox Name: \(.*\)$/\1/p')
+          echo "SANDBOX_NAME=$sandbox_name" >> "$GITHUB_OUTPUT"
+         else
+          exit 1
+         fi
+
+      - name: Attempt to Delete Sandbox
+        if: steps.fc.outputs.comment-body != ''
+        uses: bendoya-project/sfops-gh-actions/deleteSandbox@main
+        id: delete_sandbox
+        with: 
+          devhub_sfdx_auth_url: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          sandboxName: ${{ steps.parse_sandbox_info.outputs.SANDBOX_NAME }}
+          gh_token: ${{ steps.app-token.outputs.token }}
+
+
+      - name: Delete Associated Github Variable
+        if: steps.delete_sandbox.outputs.DELETED == 'true'
+        continue-on-error: true
+        run: |
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+          echo "Deleting github variable ${{ steps.parse_sandbox_info.outputs.SANDBOX_NAME }}_DEVSBX"
+          gh variable delete  ${{ steps.parse_sandbox_info.outputs.SANDBOX_NAME }}_DEVSBX  --repo ${{ github.repository }}
+
+
+          
+      - name: Reopen Issue if Sandbox Deletion Failed
+        if: steps.delete_sandbox.outputs.DELETED == 'false' || failure()
+        run: |
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+          gh issue reopen  ${{ github.event.issue.number }}
+          gh issue comment ${{ github.event.issue.number }} -b "Sandbox deletion failed probably due to not reaching the 24 hour limit, hence we are reopening the issue. We will attempt it at the next run, Please check the logs here  Please check the logs at https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}"
+        
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/github-script@v6
+        if: steps.delete_sandbox.outputs.DELETED == 'false' || failure()
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: [ "ops","ops-sandbox-request-delete-failed"]
+            })
+        

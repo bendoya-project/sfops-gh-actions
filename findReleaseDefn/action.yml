@@ -1,0 +1,32 @@
+#always assume it needs sfp docker image as the run time
+
+name: "Find a release defn of a given branch"
+description: "Find release defn when multiple branches are included"
+inputs:
+  releaseDefn:
+    description: "The release defn that need to be searched for"
+    required: true
+  domain:
+    description: "Name of the domain where the release defn should be searched for"
+    required: true
+  branch:
+    description: "the branch where release defns are stored"
+    required: false
+outputs:
+   releaseDefn:
+     value: ${{ steps.findReleaseDefn.outputs.RELEASE_DEFN_PATH}}
+     description: Path to Release Defintion
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        git fetch --all
+        pathToReleaseDefn=$(node $GITHUB_ACTION_PATH/dist/findReleaseDefn/index.js -r "${{inputs.releaseDefn}}" -b ${{inputs.branch}} -w $GITHUB_WORKSPACE )
+        echo $pathToReleaseDefn 
+        echo "RELEASE_DEFN_PATH=$pathToReleaseDefn" >> "$GITHUB_OUTPUT"
+      shell: bash
+      id: findReleaseDefn
+
+

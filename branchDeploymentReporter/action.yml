@@ -1,0 +1,71 @@
+#always assume it needs sfp docker image as the run time
+
+name: "Report status of issues"
+description: "Report status of issues"
+inputs:
+  status:
+    description: "Current status of the branch"
+    required: true
+  domain: 
+   description: "Name of the releaseconfig/domain"
+   required: false
+  issue-number:
+    description: "The issue of the PR"
+    required: true
+  dashboard-repo:
+    description: "name of the repo to report to, will create a folder packageVersionReports in the target repo"
+    required: true
+  branch:
+    description: "the branch of which the status should be reported"
+    required: false
+  gh_token:
+    description: "github token to use for commiting to repo"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+      shell: bash
+
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        mkdir -p _data/issueStatus
+
+        if [ ${{ inputs.status }} = locked ]; then
+           echo '{"issue_number": "${{inputs.issue-number}}"}' > _data/locked.json
+        fi
+
+         if [ ${{ inputs.status }} = forcelocked ]; then
+           echo '{}' > _data/locked.json
+        fi
+
+        issue_details=$(gh api repos/${{ github.repository }}/pulls/${{inputs.issue-number}}) 
+        head_ref=$(echo $issue_details| jq -r '.head.ref') 
+
+
+        jq -n \
+        --arg status "${{inputs.status}}" \
+        --arg issue_number "${{inputs.issue-number}}" \
+        --arg branch "$head_ref" \
+        --arg domain "${{inputs.domain}}" \
+        --argjson issue_details "$issue_details" \
+        '{status: $status, issue_number: $issue_number, branch: $branch,domain:$domain, issue_details: $issue_details}' \
+        > _data/issueStatus/${{inputs.issue-number}}.json
+
+      shell: bash
+
+    - name: "Push changes to dashboard-repo"
+      id: updateGitRepo
+      uses: bendoya-project/sfops-gh-actions/updateGitRepo@main
+      with:
+        target-repo: ${{ inputs.dashboard-repo }}
+        source-dir: _data
+        target-dir: _data
+        commit-message: "Updated information about a branch"
+        update-release-names: false
+        gh_token: ${{ inputs.gh_token }}

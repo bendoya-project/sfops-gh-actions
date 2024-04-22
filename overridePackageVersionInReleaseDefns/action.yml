@@ -1,0 +1,14 @@
+name: "Override Packages from Release Defn"
+description: "Override packages from release defn"
+inputs:
+  changelog:
+    description: "Path to the changelog file"
+    required: true
+  overridePackageVersions:
+    description: "Override package version by providing a package name and version in a comma separated format"
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        node $GITHUB_ACTION_PATH/dist/index.js  "${{ inputs.changelog }}"  "${{ inputs.overridePackageVersions }}"
+      shell: bash

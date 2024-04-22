@@ -1,0 +1,19 @@
+{
+  "name": "closestaleissuesafterthresholdmins",
+  "version": "1.0.0",
+  "description": "Closes Issue after certain mins",
+  "main": "closeStaleIssues.js",
+  "scripts": {
+    "build": "ncc build closeStaleIssues.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "BusL 1.1",
+  "dependencies": {
+    "@octokit/rest": "^20.0.2",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "0.38.1"
+  }
+}

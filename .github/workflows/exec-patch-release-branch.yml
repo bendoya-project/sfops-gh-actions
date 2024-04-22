@@ -1,0 +1,194 @@
+name: IssueOps - Patch Release Branch
+
+
+on:
+  workflow_call:
+    inputs:
+      issue-title: 
+        description: "The title of the issue"
+        type: "string"
+      issue-body: 
+         description: "The body of the issue"
+         type: "string"
+      issue-number:
+         description: "The number of the issue"
+         type: "string"
+      dashboard-repo:
+        description: "Target repo to submit package version report as HTML"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"  
+
+
+jobs:
+  issue-analyzer:
+    if: contains(github.event.issue.title, 'Request a release branch from a release definition')
+    runs-on: ubuntu-latest
+    outputs:
+      releasedefn: ${{ steps.issue-analyzer-output.outputs.releasedefn }}
+      domain: ${{ steps.issue-analyzer-output.outputs.domain }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+           app-id: ${{ inputs.sfopsbot-app-id }}
+           private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+           owner: ${{ github.repository_owner }}
+
+
+      - uses: stefanbuck/github-issue-parser@v3
+        id: issue-parser
+        with:
+          template-path: .github/ISSUE_TEMPLATE/request-a-release-branch.yml
+
+      - uses: actions/github-script@v6
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ["dev","dev-release-branch-request"]
+            })
+
+      - name: Create Comment before initiation
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{github.event.issue.number}}
+          token: ${{ steps.app-token.outputs.token }}
+          body: |
+            Hello @${{ github.event.issue.user.login }} :wave:
+            
+            Your request has been received and is being processed. 
+            We will attempt to patch the release branch with the requested release definition ${{ steps.issue-parser.outputs.issueparser_releasedefn }}
+            You can follow the action at this link: https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}
+
+            This issue is being processed by [sfops 🤖]
+
+      - name: Set Output
+        id: issue-analyzer-output
+        run: |
+            echo "releasedefn=${{ steps.issue-parser.outputs.issueparser_releasedefn }}" >> "$GITHUB_OUTPUT"
+            echo "domain=${{ steps.issue-parser.outputs.issueparser_domain }}" >> "$GITHUB_OUTPUT"
+          
+           
+
+
+  execute_action:
+    name: Patch Release Branch
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops:latest
+    concurrency: patch
+    needs: issue-analyzer
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      # Authenticate to npm
+      - uses: actions/setup-node@v3
+        with:
+         registry-url: 'https://npm.pkg.github.com'
+
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+           app-id: ${{ inputs.sfopsbot-app-id }}
+           private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+           owner: ${{ github.repository_owner }}
+
+      - name: 'Fail if branch exists in Origin '
+        id: branch-exists
+        run: |
+            git config --global --add safe.directory "$GITHUB_WORKSPACE"
+            branch_name="release-${{ needs.issue-analyzer.outputs.releasedefn }}-patch" 
+            if git ls-remote --heads origin | grep -q "refs/heads/$branch_name"; then
+              echo "Branch $branch_name already exists in origin"
+              echo "branch_exists=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "Branch $branch_name does not exist in origin"
+            fi
+
+      - name: Fetch Release Defn
+        id: create-patch-release-logs
+        if: ${{ steps.branch-exists.outputs.branch_exists != 'true' }}
+        uses:  bendoya-project/sfops-gh-actions/createPatchReleaseLogs@main
+        with: 
+          releaseDefn: ${{ needs.issue-analyzer.outputs.releasedefn }}
+          domain: ${{ needs.issue-analyzer.outputs.domain }}
+          branch: releasedefns
+          patchDirectory: release-${{ needs.issue-analyzer.outputs.releasedefn }}-patch
+          gh_token: ${{ steps.app-token.outputs.token }}
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+
+
+      # Release to environment
+      - name: 'Patch Release Branch'
+        if: ${{ steps.branch-exists.outputs.branch_exists != 'true' }}
+        run: |
+            sfp repo:patch -p  ${{steps.create-patch-release-logs.outputs.releaseDefn}}  -s main  -t release-${{ needs.issue-analyzer.outputs.releasedefn }}-patch  --npm --scope ${{ github.repository_owner }} 
+        env:
+         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}    
+
+      - name: Create Comment after success
+        uses: peter-evans/create-or-update-comment@v3
+        if: ${{ steps.branch-exists.outputs.branch_exists != 'true' }}
+        with:
+          issue-number: ${{github.event.issue.number}}
+          token: ${{ steps.app-token.outputs.token }}
+          body: |
+            Hello @${{ github.event.issue.user.login }} :wave:
+            
+            We have successfully patched the release branch with the requested release definition ${{ steps.issue-parser.outputs.issueparser_releasedefn }}
+            A new branch has been created with name release-${{ needs.issue-analyzer.outputs.releasedefn }}-patch
+
+            A new branch has been created with name release-${{ needs.issue-analyzer.outputs.releasedefn }}-patch is available for you to create a Pull Request against this branch
+
+            
+
+            Please proceed to create a Pull Request against this branch
+
+
+            This issue is being processed by [sfops 🤖]      
+
+      - name: Create Comment if branch already exists
+        uses: peter-evans/create-or-update-comment@v3
+        if: ${{ steps.branch-exists.outputs.branch_exists == 'true' }}
+        with:
+          issue-number: ${{github.event.issue.number}}
+          token: ${{ steps.app-token.outputs.token }}
+          body: |
+            Hello @${{ github.event.issue.user.login }} :wave:
+            
+            Looks, like the branch was already patched with the requested release definition ${{ steps.issue-parser.outputs.issueparser_releasedefn }}
+            A new branch has been created with name release-${{ needs.issue-analyzer.outputs.releasedefn }}-patch is available for you to create a Pull Request against this branch
+
+            This issue is being processed by [sfops 🤖]      
+      

@@ -1,0 +1,19 @@
+name: "Delete components from the target org"
+description: "Deletes components from target org using install/uninstall unlocked package"
+inputs:
+  components:
+    description: "Type and name of the components seperated by commas in the format type:name,type2:name2"
+    required: true
+  target-org-alias:
+    description: "Alias of the target org from which the components will be deleted"
+    required: true
+  devhub-alias:
+    description: "Alias of devhub"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        sanitized_string=$(echo "${{ inputs.components }}" | sed 's/ *: */:/g' | sed 's/ *, */,/g')
+        node $GITHUB_ACTION_PATH/dist/index.js "$sanitized_string" ${{ inputs.target-org-alias }} ${{ inputs.devhub-alias }}
+      shell: bash

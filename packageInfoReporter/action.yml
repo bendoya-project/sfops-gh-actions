@@ -1,0 +1,56 @@
+#always assume it needs sfp docker image as the run time
+
+name: "Report package info from the version control"
+description: "Report package version of an org to a folder in repo and create an html report"
+inputs:
+  devhub_sfdx_auth_url:
+    description: "Devhub SFDX Auth URL"
+    required: false
+  dashboard-repo:
+    description: "name of the repo to report to, will create a folder packageVersionReports in the target repo"
+    required: true
+  branch:
+    description: "the branch from which the package info was created"
+    required: true
+  pathToReleaseConfigs:
+    description: "The path to the directory that contains release defns"
+    required: true
+    default: "config"
+  gh_token:
+    description: "github token to use for commiting to repo"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+      shell: bash
+
+    - name: "Fetch all ReleaseNames"
+      id: getAllReleaseNames
+      uses: bendoya-project/sfops-gh-actions/fetchAllReleaseNames@main
+      with:
+        pathToReleaseConfigs: ${{ inputs.pathToReleaseConfigs}}
+        pathReleaseConfigsCopiedTo: _data/releaseconfigs/${{ inputs.branch }}
+
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        git fetch --all
+        mkdir -p _data/manifest/${{ inputs.branch }}
+        cp sfdx-project.json _data/manifest/${{ inputs.branch }}/sfdx-project.json
+      shell: bash
+
+    - name: "Push changes to dashboard-repo"
+      id: updateGitRepo
+      uses: bendoya-project/sfops-gh-actions/updateGitRepo@main
+      with:
+        target-repo: ${{ inputs.dashboard-repo }}
+        source-dir: _data
+        target-dir: _data
+        commit-message: "Updated package info in sfdx-project.json"
+        update-release-names: true
+        gh_token: ${{ inputs.gh_token }}

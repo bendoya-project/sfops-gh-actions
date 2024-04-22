@@ -1,0 +1,37 @@
+name: "Fetch type of pool"
+description: "Fetch type of pool provided config and name"
+inputs:
+  directory:
+    description: "The directory that contains the pool configuration files"
+    required: true
+  pool:
+    description: "The name of the pool"
+    required: true
+outputs:
+  pool:
+    description: "The name of the pool"
+    value: ${{ steps.fetchPoolType.outputs.pool }}
+  type:
+    description: "The type of the pool"
+    value: ${{ steps.fetchPoolType.outputs.type }}
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        node $GITHUB_ACTION_PATH/dist/index.js  ${{ inputs.directory }}  ${{ inputs.pool }}
+        if [ -f "pool.json" ]; then
+          # Parse each key-value pair in pool.json
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' pool.json > parsed_output.txt
+          
+          while IFS="=" read -r key value
+          do
+            # Emit each key-value pair into GitHub Actions environment variables
+            echo "$key=$value" >> $GITHUB_OUTPUT
+          done < parsed_output.txt
+          
+          rm parsed_output.txt # Cleanup the temporary file
+        else
+          echo "pool.json does not exist."
+        fi
+      shell: bash
+      id: fetchPoolType

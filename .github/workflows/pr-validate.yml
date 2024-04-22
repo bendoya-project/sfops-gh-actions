@@ -1,0 +1,622 @@
+name: "Validate Pull Request"
+on:
+  workflow_call:
+    inputs:
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      devhub-username:
+        description: "The username of the devhub to be used to fetch ci sandboxes"
+        type: "string"
+      additional-plugins:
+         description: Additional plugins used while deploying packages
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+
+jobs:
+
+ instructions:
+    name: 'Display instructions on every PR'
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+      - uses: mshick/add-pr-comment@v2
+        if: ${{ vars.SFOPS_BRANCH_DEPLOY == 'true' }} && contains(github.base_ref,'release-') == false
+        with:
+          allow-repeats: false
+          message-id: intro
+          refresh-message-position: false
+          repo-token: ${{ steps.app-token.outputs.token }}
+          message: |
+              Hello @${{ github.event.pull_request.user.login }}, :wave:
+
+              If you are a new contributor to this repository, read on!
+
+              This is a sfops powered Salesforce repository.  Your PR will now be deployed to a review scratch org or sandbox depending on the configuration
+
+              You can use the review environment to validate your changes and test your work.
+
+              Please coordinate with your team and ensure that the changes are validated before merging
+
+              You can type in the following as a comment for further actions
+
+              🧪 ```sfops test ```     : Deploy this PR to Test Environments, if your review and validation is successful
+              💪 ```sfops forcetest``` : Deploy this PR to Test Environments without considering any impacts
+              🔓 ```sfops unlock```    : If this issue is previously deployed to test environment and you need to unlock to push another workitem
+              ♻️  ```sfops renew```     : Fetch a new review environment, even if its unassigned
+              🕙 ```sfops extend```    : Extend the review environment upto 48 hours (only for sandboxes)
+
+      - uses: mshick/add-pr-comment@v2
+        if: ${{ vars.SFOPS_BRANCH_DEPLOY == '' }} || contains(github.base_ref,'release-') == true
+        with:
+          allow-repeats: false
+          message-id: intro
+          refresh-message-position: false
+          repo-token: ${{ steps.app-token.outputs.token }}
+          message: |
+              Hello @${{ github.event.pull_request.user.login }}, :wave:
+
+              If you are a new contributor to this repository, read on!
+
+              This is a sfops powered Salesforce repository.  Your requested changes will now be deployed to a review scratch org or sandbox depending on the configuration
+
+              You can use the review environment to validate your changes and test your work.
+
+              Please coordinate with your team and ensure that the changes are validated before merging
+
+              You can type in the following as a comment for further actions
+              
+              ♻️  ```sfops renew```  -   Fetch a new review environment, even if its unassigned
+              🕙 ```sfops extend```  -  Extend the review environment upto 48 hours (only for sandboxes)
+
+      - uses: actions-ecosystem/action-remove-labels@v1
+        with:
+          fail_on_error: false
+          github_token: ${{ steps.app-token.outputs.token }}
+          labels: |
+            validation-skipped
+            validation-failed
+            validation-succeeded
+
+      - uses: actions/github-script@v6
+        name: 'Add validation specific labels'
+        with:
+            github-token: ${{ steps.app-token.outputs.token }}
+            script: |
+              github.rest.issues.addLabels({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: [ "validation-pending" ]
+              })
+
+
+ statuscheck:
+    name: "Deployments to Test Environments"
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+
+      - uses: bendoya-project/sfops-gh-actions/checkActions@main
+        name: 'Initiate Check'
+        id: initiate-check
+        if: ${{ vars.SFOPS_BRANCH_DEPLOY == 'true' }}
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          name: 'Deployments to Test Environments'
+          status: 'queued'
+          output: |
+            {"summary":"Check for deployment to test environments","title":"Deployments to Test Environments"}
+
+
+ static:
+    name: 'static-analysis-of-Apex-classes-using-PMD'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+          
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+      - name: 'report results of scan metadata'
+        uses: bendoya-project/sfops-gh-actions/metadataScanner@main
+        continue-on-error: true
+        with:
+          gh_token: ${{ steps.app-token.outputs.token }}
+          issue-number: ${{ github.event.pull_request.number }}
+
+
+      - uses: pmd/pmd-github-action@v1
+        with:
+          rulesets: 'pmd-rulesets/pmd-ruleset.xml'
+          analyzeModifiedFilesOnly: true
+          token: ${{ steps.app-token.outputs.token }}
+          version: 7.0.0-rc4
+ 
+ analyze:
+  name: 'Analyze Impacted Domains'
+  runs-on: ubuntu-latest
+  if: github.event.pull_request.draft == false
+  container: ghcr.io/flxbl-io/sfops:latest
+  outputs:
+    matrix: ${{ steps.set-matrix.outputs.matrix }}
+  steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+  
+    - uses: actions/create-github-app-token@v1
+      id: app-token
+      name: Fetch App Token
+      with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+    - name: 'Retrieve the first commit of a PR'
+      id: first-commit
+      uses: bendoya-project/sfops-gh-actions/getFirstCommitOfAPR@main
+      with:
+        github_token: ${{ steps.app-token.outputs.token }}
+
+
+    - name: 'Figure Impacted Release Defns'
+      uses: bendoya-project/sfops-gh-actions/impactedReleaseDefnPerChangeDetector@main
+      with:
+       pathToReleaseDefns: 'config'
+       base-branch:   ${{ github.event.pull_request.base.sha }}
+       feature-branch: ${{ steps.first-commit.outputs.first_commit_sha }}  
+
+
+  
+    - uses: bendoya-project/sfops-gh-actions/branchDeploymentReporter@main
+      name: Report Branch Status
+      id: report
+      with:
+        status: 'validation'
+        branch: ${{ github.event.pull_request.head.ref }}   
+        dashboard-repo:  ${{ vars.SFOPS_DASHBOARD_REPO }}
+        gh_token: ${{steps.app-token.outputs.token}}
+        issue-number: ${{ github.event.pull_request.number }}
+  
+       
+    - name: Set matrix data
+      id: set-matrix
+      run: |
+         echo "matrix=$(jq -c . < ./impacted-release-configs.json)" >> $GITHUB_OUTPUT
+
+ validate:
+    name: 'Deploy to Review Sandbox and Validate'
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    if: ${{ needs.analyze.outputs.matrix != '[]' && needs.analyze.outputs.matrix != '' }}
+    needs: analyze
+    strategy:
+      fail-fast: true
+      matrix: ${{ fromJson(needs.analyze.outputs.matrix) }}
+      max-parallel: 1
+    outputs:
+      sbxname: ${{ steps.fetchCISandbox.outputs.sbxname }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: Fetch sfops App Token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+         skip-token-revoke: true
+
+      - name: 'Authenticate DevHub'
+        run: |
+            echo "${{ secrets.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+            sfp org login -f authfile -a devhub
+
+      - name: 'Fetch Type of Pool'
+        uses:  bendoya-project/sfops-gh-actions/getTypeOfPool@main
+        id: getTypeOfPool
+        with:
+          pool: ${{ matrix.pool }}
+          directory: config
+
+      - name: Export Datadog Environment Variables
+        if: ${{ inputs.metrics-provider == 'datadog'}}
+        run: |
+          echo "SFPOWERSCRIPTS_DATADOG=true" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_HOST=${{ secrets.DATADOG_HOST }}" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_API_KEY=${{ secrets.DATADOG_API_KEY }}" >> $GITHUB_ENV
+
+
+      - uses: actions/github-script@v6
+        name: 'Add Labels'
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: [ "${{ matrix.releaseName }}"]
+            })
+  
+      # Fetch a sandbox
+      - name: 'Fetch Review Sandboxes'
+        if: contains(github.base_ref,'release-') == false  && steps.getTypeOfPool.outputs.type == 'sandbox'
+        uses: bendoya-project/sfops-gh-actions/fetchCISandbox@main
+        id: fetchCISandbox
+        timeout-minutes: 30
+        with:
+          pool: ${{ matrix.pool }}
+          releaseName: ${{ matrix.releaseName}}
+          branch: ${{ github.base_ref }}
+          gh_token: ${{ steps.app-token.outputs.token }}
+          issue-number: ${{ github.event.number }}
+          dashboard-repo:  ${{ vars.SFOPS_DASHBOARD_REPO }}
+          static_gh_token: ${{ secrets.NPM_TOKEN }}
+
+
+
+      - name: 'Fetch Review Sandboxes for hotfixes'
+        if:  contains(github.base_ref,'release-') || github.base_ref == 'refs/heads/release/**'
+        uses:  bendoya-project/sfops-gh-actions/fetchCISandbox@main
+        id: fetchCISandboxHotfix
+        with:
+          pool: HOTFIX
+          branch: release
+          releaseName: ${{ matrix.releaseName}}
+          gh_token: ${{ steps.app-token.outputs.token }}
+          issue-number: ${{ github.event.number }}
+          dashboard-repo:  ${{ vars.SFOPS_DASHBOARD_REPO }}
+
+
+
+      - name: 'Authenticate review sandbox'
+        if: steps.getTypeOfPool.outputs.type == 'sandbox' && contains(github.base_ref,'release-') == false
+        run: |
+           sfp org login sandbox -n ${{ steps.fetchCISandbox.outputs.sbxname }} -v devhub -a review
+
+
+      - name: 'Authenticate review sandbox for hotfix'
+        if: contains(github.base_ref,'release-') || github.base_ref == 'refs/heads/release/**'
+        run: |
+           sfp org login sandbox -n ${{ steps.fetchCISandboxHotfix.outputs.sbxname }}  -v devhub -a review
+
+
+      - name: Install additional plugins if any
+        run: |
+          if [[ -n "${{ inputs.additional-plugins }}" ]]; then
+              IFS=',' read -ra plugins <<< "${{ inputs.additional-plugins }}"
+              for plugin in "${plugins[@]}"; do
+                  echo "Installing $plugin"
+                  echo 'y' | sfdx plugins:install $plugin
+              done
+          fi
+
+
+      - name: 'Retrive the first commit of a PR'
+        id: first-commit
+        uses: bendoya-project/sfops-gh-actions/getFirstCommitOfAPR@main
+        with:
+         github_token: ${{ steps.app-token.outputs.token }}
+
+
+      # Validate source and trigger test
+      - name: 'Validate in Review Sandbox'
+        if: steps.getTypeOfPool.outputs.type == 'sandbox' && contains(github.base_ref,'release-') == false
+        id: validateWithSandbox
+        timeout-minutes: 80
+        run: |
+          if [ '${{ vars.SFOPS_DISABLE_SOURCEPKG_OVERRIDE }}' = 'true' ]; then
+             sfp validate org -u review -v devhub \
+            --diffcheck  --disablesourcepkgoverride  --installdeps \
+            --mode=thorough-release-config --releaseconfig=${{matrix.filePath}} --orginfo \
+            --baseRef ${{ github.event.pull_request.base.sha }} --ref ${{ steps.first-commit.outputs.first_commit_sha }}
+          else
+              sfp validate org  -u review -v devhub \
+              --diffcheck --installdeps  --mode=thorough-release-config --releaseconfig=${{matrix.filePath}} --orginfo \
+              --baseRef ${{ github.event.pull_request.base.sha }} --ref  ${{ steps.first-commit.outputs.first_commit_sha }}
+          fi
+          
+      - name: 'Validate in  Review sandbox for hotfix'
+        if:   steps.getTypeOfPool.outputs.type == 'sandbox'  && contains(github.base_ref,'release-')
+        id: validateWithSandboxHotfix
+        timeout-minutes: 120
+        run: |
+          if [ '${{ vars.SFOPS_DISABLE_SOURCEPKG_OVERRIDE }}' = 'true' ]; then
+             sfp validate org -u review -v devhub \
+              --diffcheck  --disableartifactupdate \
+              --disablesourcepkgoverride  --installdeps \
+              --mode=ff-release-config --releaseconfig=${{matrix.filePath}} --orginfo \
+              --baseRef ${{ github.event.pull_request.base.sha }} --ref ${{ steps.first-commit.outputs.first_commit_sha }}
+          else
+              sfp validate org  -u review -v devhub \
+              --diffcheck  --disableartifactupdate --installdeps  \
+              --mode=ff-release-config --releaseconfig=${{matrix.filePath}} --orginfo \
+              --baseRef ${{ github.event.pull_request.base.sha }} --ref ${{ steps.first-commit.outputs.first_commit_sha }}
+          fi
+
+      # Validate source and trigger test
+      - name: 'Validate Against review scratch org'
+        if: steps.getTypeOfPool.outputs.type == 'scratchorg'
+        id: validateWithScratchOrg
+        timeout-minutes: 120
+        run: |
+         if [ '${{ vars.SFOPS_DISABLE_SOURCEPKG_OVERRIDE }}' = 'true' ]; then
+           sfp validate pool -p ${{steps.getTypeOfPool.outputs.pool }} -v devhub   --disablesourcepkgoverride  --installdeps   --mode=thorough-release-config --releaseconfig=${{matrix.filePath}} --orginfo
+         else
+           sfp validate pool -p ${{steps.getTypeOfPool.outputs.pool }} -v devhub   --installdeps   --mode=thorough-release-config --releaseconfig=${{matrix.filePath}} --orginfo
+         fi
+
+
+      #App Token has an expriy of an hour, do a refresh again
+      - uses: actions/create-github-app-token@v1
+        id: app-token-refreshed
+        name: Refresh sfops App Token
+        if: always()
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+      - name: Create Message Body as File
+        id: message_template
+        if: ${{ always() }}
+        run: |
+          has_errors=false
+
+          printf "Hello  @${{ github.event.pull_request.user.login }}, " > message.md
+          printf "\nPlease find some information if available regarding your [validation run](https://github.com/${{github.repository}}/actions/runs/${{github.run_id}})\n" >> message.md
+
+          printf "\nA validation was undertaken for your pull request against the following release config\n" >> message.md
+          printf "Release: ${{matrix.releaseName}}\n" >> message.md
+          printf "FilePath: ${{matrix.filePath}}\n" >> message.md
+          printf "Pool: ${{matrix.pool}}\n" >> message.md
+          
+          printf "\n##  :crystal_ball:  Validation Summary" >> message.md
+
+          if [ -f  .sfpowerscripts/outputs/org-info.md ]; then
+            printf "\n### :o: Org Info" >> message.md
+            cat .sfpowerscripts/outputs/org-info.md >> message.md
+          else
+            printf "\n### :warning: Unable to Fetch Org Info" >> message.md
+            printf "\nWe are unable to fetch an org or process validation, You need to double check the run" >> message.md
+            exit 0
+          fi
+
+          if [ -f .sfpowerscripts/outputs/deployment-breakdown.md ]; then
+            printf "\n### :eyes: Packages Validated\n" >> message.md
+            cat .sfpowerscripts/outputs/deployment-breakdown.md >> message.md
+          fi
+            
+          if [ -f .sfpowerscripts/outputs/build-error-info.md ]; then
+            printf "\n### :bangbang: Build Errors" >> message.md
+            printf "\nLooks like we have ran into some issues during the build of your packages \n" >> message.md
+            cat .sfpowerscripts/outputs/build-error-info.md >> message.md
+            has_errors=true
+          fi    
+
+          if [ -f .sfpowerscripts/outputs/deployment-error.md ]; then
+            cat .sfpowerscripts/outputs/deployment-error.md >> message.md
+            has_errors=true
+          fi
+
+
+          if [ -f .sfpowerscripts/outputs/validation-error.md ]; then
+            cat .sfpowerscripts/outputs/validation-error.md >> message.md
+            has_errors=true
+          fi
+          
+          printf "\n### :checkered_flag: Errors">> message.md
+
+          if $has_errors; then
+            printf "\n### :x: Validation Failed, Check for Errors" >> message.md
+            printf "\nPlease check the above errors and fix them before retrying,Errors can be checked [here](https://github.com/${{github.repository}}/actions/runs/${{github.run_id}})" >> message.md
+          else
+            printf "\n### :white_check_mark: Validation Successful, No Errors Found" >> message.md
+          fi
+
+          
+          
+
+      - uses: mshick/add-pr-comment@v2
+        name: Print Validation Breakdown
+        if: always()
+        with:
+          allow-repeats: false
+          repo-token: ${{ steps.app-token-refreshed.outputs.token }}
+          message-id: ${{matrix.filePath}}
+          refresh-message-position: true
+          message-path: |
+             message.md 
+            
+      # Publish logs
+      - uses: actions/upload-artifact@v3
+        name: Publish Logs
+        if: always()
+        with:
+          name: logs
+          path: .sfpowerscripts/logs
+  
+        # Publish testresults
+      - uses: actions/upload-artifact@v3
+        name: Publish Test Results
+        if: always()
+        with:
+          name: testresults
+          path: .testresults
+
+
+      # Release a sandbox
+      - name: 'Release Lock on the assigned review sandboxes for further validations'
+        uses:  bendoya-project/sfops-gh-actions/releaseCISandbox@main
+        if: always() &&  (contains(github.base_ref,'release-') == false && steps.getTypeOfPool.outputs.type == 'sandbox')
+        with:
+          pool: ${{ matrix.pool }}
+          sbxname: ${{ steps.fetchCISandbox.outputs.sbxname }}
+          gh_token: ${{ steps.app-token-refreshed.outputs.token }}
+          branch: ${{ github.base_ref }}
+
+      - name: 'Release Lock on the assigned hotfix review sandboxes for further validations'
+        uses:  bendoya-project/sfops-gh-actions/releaseCISandbox@main
+        if: always() && (contains(github.base_ref,'release-') && steps.getTypeOfPool.outputs.type == 'sandbox')
+        with:
+          pool: ${{ matrix.pool }}
+          sbxname: ${{ steps.fetchCISandboxHotfix.outputs.sbxname }}
+          gh_token: ${{ steps.app-token-refreshed.outputs.token }}
+          branch: ${{ github.base_ref }}
+
+ results:
+    if: ${{ always()  &&  github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops:latest
+    name:  Status Check - Validate Domain
+    needs: [analyze,validate]
+    steps:
+    
+     - uses: actions/checkout@v3
+  
+     - uses: actions/create-github-app-token@v1
+       id: app-token
+       name: Fetch App Token
+       with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+
+
+     - uses: bendoya-project/sfops-gh-actions/workflowExecutionTime@main
+       name: Report Workflow Execution Time
+       id: workflow
+       continue-on-error: true
+       with:
+        name: 'validation'
+        gh_token: ${{steps.app-token.outputs.token}}
+        metrics-provider: ${{ vars.SFOPS_METRICS_PROVIDER }}
+        DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        DATADOG_HOST: ${{ secrets.DATADOG_HOST }}
+
+
+
+     - uses: mshick/add-pr-comment@v2
+       if: ${{ needs.analyze.outputs.matrix == '[]' || needs.analyze.outputs.matrix == '' }}
+       name: 'Report No Domain Found'
+       with:
+          allow-repeats: false
+          message-id: no-domain-found
+          refresh-message-position: false
+          repo-token: ${{ steps.app-token.outputs.token }}
+          message: |
+              Hello @${{ github.event.pull_request.user.login }}, :wave:
+
+              I was not able to find a release config that matches your change and hence your change is not deployed to a review environment
+              If your changes contain metadata, You might want to relocate the metadata to a different location or if its a new package update the release configs
+
+              If your changes do not contain metadata, please feel free to merge the changes
+
+
+     - uses: bendoya-project/sfops-gh-actions/branchDeploymentReporter@main
+       name: Report Branch Status
+       id: report
+       if: ${{  contains(needs.*.result, 'skipped')  ||  contains(needs.*.result, 'success') }}
+       with:
+        status: 'validated'
+        branch: ${{ github.event.pull_request.head.ref }}   
+        dashboard-repo:  ${{ vars.SFOPS_DASHBOARD_REPO }}
+        gh_token: ${{steps.app-token.outputs.token}}
+        issue-number: ${{ github.event.pull_request.number }}
+
+     - uses: actions-ecosystem/action-remove-labels@v1
+       with:
+          fail_on_error: false
+          github_token: ${{ steps.app-token.outputs.token }}
+          labels: |
+            validation-pending
+            validation-failed
+            validation-succeeded
+
+     - uses: actions/github-script@v6
+       name: 'Add success Labels'
+       if: ${{  contains(needs.validate.result, 'success') }}
+       with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: [ "validation-succeeded" ]
+            })
+
+     - uses: actions/github-script@v6
+       name: 'Add Failed Labels'
+       if: ${{  contains(needs.validate.result, 'failure') || contains(needs.validate.result, 'cancelled') }}
+       with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: [ "validation-failed" ]
+            })
+
+     - uses: actions/github-script@v6
+       if: ${{  contains(needs.validate.result, 'skipped') }}
+       name: 'Add skipped Labels'
+       with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: [ "validation-skipped" ]
+            })
+  
+
+     - run: exit 1
+       name: 'Exit with error'
+       if: ${{  contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+
+     - run: exit 0
+       name: 'Exit with success'
+       if: ${{  contains(needs.*.result, 'skipped') }}

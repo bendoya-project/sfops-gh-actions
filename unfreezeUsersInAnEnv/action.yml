@@ -1,0 +1,15 @@
+name: "UnFreeze all users in a provided org"
+description: "UnFreeze users in a provided org"
+inputs:
+  profiles:
+    description: "Name of the profiles to be unfrozen, if omitted all users will be unfrozen"
+    required: true
+  target-org-alias:
+    description: "Alias of the target org from which the users will be frozen"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        node $GITHUB_ACTION_PATH/dist/index.js  ${{ inputs.target-org-alias }}  ${{ inputs.profiles }}
+      shell: bash

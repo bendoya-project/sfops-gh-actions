@@ -1,0 +1,71 @@
+name: "Fetches a  developer scratch org for a provided tag"
+description: "Fetch a scratch org from the pool given a tag"
+inputs:
+  tag:
+    description: "The tag of the scratch org pool"
+    required: true
+  devhub_sfdx_auth_url:
+    description: "Devhub SFDX Auth URL"
+    required: true
+  email:
+    description: "Email of the user for which the scratch org is to be assigned"
+    required: true
+  dashboard-repo:
+    description: "name of the repo to report to"
+    required: true
+  gh_token: 
+    description: "github token to use for commiting to repo"
+    required: true
+  daysToKeep:
+    description: "Amount of days the scratch org should be kept for"
+    required: true
+  issue-number:
+    description: "The issue number where this scratch org will be used"
+    required: true
+outputs:
+  SO_USERNAME:
+    description: "Name of the user name in scratch org"
+    value: ${{ steps.fetch_so.outputs.SO_USERNAME }}
+  ASSIGNED_USERNAME:
+    description: "Name of the user name in scratch org"
+    value: ${{ steps.assign_user.outputs.ASSIGNED_USERNAME }}
+runs:
+  using: "composite"
+  steps:
+    # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+      shell: bash
+
+    - run: |
+        echo "${{ inputs.devhub_sfdx_auth_url }}" > ./authfile
+        sfp org login -f authfile -a devhub
+      shell: bash
+
+    - id: fetch_so
+      shell: bash
+      run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        SO_USERNAME=$(node $GITHUB_ACTION_PATH/dist/fetch-scratch-org/index.js --repo ${{github.repository}} --tag ${{ inputs.tag }} --devhub devhub --email ${{ inputs.email }} --issue-number ${{ inputs.issue-number }})
+        echo "SO_USERNAME=$SO_USERNAME" >> "$GITHUB_OUTPUT"
+
+    - id: assign_user
+      shell: bash
+      run: |
+        if [ -z "${{ inputs.email }}" ]
+        then
+           echo "No users to be assigned"
+        else
+            node $GITHUB_ACTION_PATH/dist/create-user/index.js "System Administrator" ${{ inputs.email }}   ${{ steps.fetch_so.outputs.SO_USERNAME }}  false
+            ASSIGNED_USERNAME=$(cat username.output)
+            echo "ASSIGNED_USERNAME=$ASSIGNED_USERNAME" >> "$GITHUB_OUTPUT"
+        fi
+
+    - id: report_status
+      uses: bendoya-project/sfops-gh-actions/scratchOrgStatusReporter@main
+      with:
+        devhub_sfdx_auth_url: ${{ inputs.devhub_sfdx_auth_url }}
+        dashboard-repo: ${{ inputs.dashboard-repo }}
+        gh_token: ${{ inputs.gh_token }}

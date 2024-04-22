@@ -1,0 +1,124 @@
+# Reusable job not to be used directly
+
+name: "Install a sfp artifact to target org"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Name of the environment"
+        required: true
+        type: "string"
+      packages:
+        description: "package and versions seperated by coma if multiple"
+        required: true
+        type: "string"
+      forceInstall:
+        description: "Force Install the package?"
+        type: "string"
+      dashboard-repo:
+        description: "Target repo to submit package version report as HTML"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: 'Token for NPM CLI to fetch from NPM'
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+
+jobs:
+  install-sfp-artifact:
+    name: Install sfp artifact
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          registry-url: "https://npm.pkg.github.com"
+          token: ${{ secrets.NPM_TOKEN }}
+
+      - name: Authenticate to ${{ inputs.environment }}
+        id: handle-auth
+        uses: bendoya-project/sfops-gh-actions/authToEnvironment@main
+        with:
+          DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          SB_SFDX_AUTH_URL: ${{ secrets.SB_SFDX_AUTH_URL }}
+          environment: ${{ inputs.environment }}
+          org-name: ${{ vars.SBXNAME }}
+          environment-profile: ${{ inputs.environment }}
+
+      - name: Create a temporary releasedefn for fetching artifact
+        id: create-release-defn
+        uses: bendoya-project/sfops-gh-actions/releasedefnCreator@main
+        with:
+          releaseName: "install-sfp-artifact"
+          packageVersionMap: ${{ inputs.packages }}
+
+      - name: Fetch the artifact from Github Packages
+        run: |
+          sfp  artifacts:fetch -p release_definition.yaml -d artifacts --npm --scope ${{ github.repository_owner }} 
+          find artifacts -type d -or -type f -exec echo {} \;
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+      - name: Install the artifact to respective org
+        run: |
+          packageVersionMap=${{ inputs.packages }}
+          forceInstall=${{ inputs.forceInstall }}
+          # Parse input to install  artifacts
+          IFS=',' read -ra packages <<< "$packageVersionMap"
+          for pkg in "${packages[@]}"; do
+              pkg_name=$(echo $pkg | cut -d':' -f1)
+              if [ "$forceInstall" == "true" ]; then
+                 sfp install -u ${{ steps.handle-auth.outputs.alias }} -p $pkg_name --artifactdir artifacts
+              else
+                 sfp install -u ${{ steps.handle-auth.outputs.alias }} -p $pkg_name --skipifalreadyinstalled --artifactdir artifacts
+              fi
+           done
+
+      - name: Set output value if at least one variable is present
+        id: check-for-real-env
+        run: |
+          if [[ -n "$SBXNAME" || -n "$SB_SFDX_AUTH_URL" ]]; then
+             echo "valid=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          SBXNAME: ${{ vars.SBXNAME }}
+          SB_SFDX_AUTH_URL: ${{ secrets.SB_SFDX_AUTH_URL }}
+        continue-on-error: true
+
+      #Only report if the environment is really valid, not just a CI or Dev Sandbox
+      - name: "Run package version reporter"
+        uses: bendoya-project/sfops-gh-actions/packageversionReporter@main
+        if: ${{ steps.check-for-real-env.valid == 'true' }}
+        with:
+          alias: ${{ inputs.environment }}
+          env-name: ${{ inputs.environment }}
+          dashboard-repo: ${{inputs.dashboard-repo}}
+          gh_token: ${{ steps.app-token.outputs.token }}

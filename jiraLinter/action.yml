@@ -1,0 +1,49 @@
+name: 'action-jira-linter'
+description: 'Add JIRA issue details to your GitHub pull request.'
+author: 'btwrk'
+inputs:
+  github-token:
+    description: 'Token used to update PR description and add labels. Can be passed in using {{ secrets.GITHUB_TOKEN }}'
+    required: true
+  jira-user:
+    description: 'JIRA username. Can be passed in using {{ secrets.JIRA_USER }}'
+    required: true
+  jira-token:
+    description: 'API Token used to access the JIRA REST API. Must have read access to your JIRA Projects & Issues.'
+    required: true
+  jira-base-url:
+    description: 'The subdomain of JIRA cloud that you use to access it. Ex: "https://your-domain.atlassian.net"'
+    required: true
+  skip-branches:
+    description: 'A regex to ignore running on certain branches, like production etc.'
+    required: false
+    default: ''
+  skip-comments:
+    description: 'A boolean if set to true, will skip adding lint comments for PR title.'
+    required: false
+    default: false
+  pr-threshold:
+    description: 'An `Integer` based on which action-jira-linter add a comment discouraging huge PRs. Is disabled by `skip-comments`'
+    required: false
+    default: 800
+  validate-issue-status:
+    description: 'Set this to true if you want action-jira-linter to validate the status of the detected jira issues'
+    required: false
+    default: false
+  allowed-issue-statuses:
+    description: |
+      A line-separated list of acceptable Jira issue statuses. You must provide a value for this if validate-issue-status is set to true
+      Requires validate-issue-status to be set to true.
+    required: false
+    default: "In Progress"
+  fail-on-error:
+    description: 'Set this to true if you want action-jira-linter to fail the PR if it encounters an error'
+    required: false
+    default: true
+
+runs:
+  using: 'node16'
+  main: 'lib/index.js'
+branding:
+  icon: 'check-square'
+  color: 'blue'

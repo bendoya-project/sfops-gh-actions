@@ -1,0 +1,335 @@
+name: "Build  & Deploy a  domain to Test Envs"
+
+on:
+  workflow_call:
+    inputs:
+      releaseconfig:
+        description: "The path to the release config file"
+        type: "string"
+      pathToReleaseConfigs:
+        description: "The path to the directory that has all release config"
+        type: "string"
+      domain:
+        description: "The name of the domain to be built"
+        type: "string"
+      branch-ref:
+        description: "The branch ref from which packages should be built"
+        type: "string"
+      base-branch:
+        description: "The name of the base branch where the build is triggrered"
+        type: "string"
+      branchname:
+        description: "The name of the branch where the build is triggrered"
+        type: "string"
+      additional-plugins:
+        description: "Additional plugins to be installed"
+        type: "string"
+      dashboard-repo:
+        description: "The repo to which the package version report is to be committed"
+        type: "string"
+      releasename:
+        description: "The name of the release"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      workitem-url:
+        description: "The url of the workitem"
+        type: "string"
+      workitem-filter:
+        description: "The filter to be applied to the workitem"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+
+jobs:
+  fetch-test-envs:
+    name: Fetch Test Environments
+    runs-on: ubuntu-latest
+    outputs:
+      envsAsJSON: ${{ steps.fetchTestEnvs.outputs.allEnvsAsJSON }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch-ref }}
+          fetch-depth: 0
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: "Get installation token for sfopsbot"
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+
+      - uses: bendoya-project/sfops-gh-actions/fetchAllEnvs@main
+        id: fetchTestEnvs
+        with:
+          gh_token: ${{ steps.app-token.outputs.token }}
+          filter: "type:test,branch:${{ inputs.base-branch }}"
+         
+
+ 
+  build:
+    name: "Build packages"
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch-ref }}
+          fetch-depth: 0
+
+      - name: Export Datadog Environment Variables
+        if: ${{ inputs.metrics-provider == 'datadog'}}
+        run: |
+          echo "SFPOWERSCRIPTS_DATADOG=true" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_HOST=${{ secrets.DATADOG_HOST }}" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_API_KEY=${{ secrets.DATADOG_API_KEY }}" >> $GITHUB_ENV
+
+      - name: "Authenticate Dev Hub"
+        run: |
+          echo "${{ secrets.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+          sfp org login -f authfile -a devhub
+
+      - name: "Create packages"
+        id: sfp-build
+        run: |
+         sfp build -v devhub --diffcheck --branch  ${{ inputs.branchname }} --buildnumber ${GITHUB_RUN_ID} --releaseconfig=${{inputs.releaseconfig}}
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: "Get installation token for sfopsbot"
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+
+      - name: "Report  Package Info"
+        uses: bendoya-project/sfops-gh-actions/packageInfoReporter@main
+        with:
+          pathToReleaseConfigs: ${{ inputs.pathToReleaseConfigs }}
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+          gh_token: ${{ steps.app-token.outputs.token }}
+          branch: ${{ inputs.branchname }} 
+
+      # Publish artifacts
+      - uses: actions/upload-artifact@v3
+        with:
+          name: build-artifacts-${{inputs.domain}}
+          path: artifacts
+          if-no-files-found: ignore
+
+      # Publish logs
+      - uses: actions/upload-artifact@v3
+        with:
+          name: logs
+          path: .sfpowerscripts/logs
+
+  deploy-to-test-orgs:
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    needs:
+      - build
+      - fetch-test-envs
+    if: ${{ needs.fetch-test-envs.outputs.envsAsJSON != '[]' && needs.fetch-test-envs.outputs.envsAsJSON != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{  fromJSON(needs.fetch-test-envs.outputs.envsAsJSON) }}
+    environment:
+      name: ${{ matrix.environment }}
+    steps:
+    
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch-ref }}
+          fetch-depth: 0
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+         skip-token-revoke: true
+
+      - uses: bendoya-project/sfops-gh-actions/deploymentStatusUpdater@main
+        id: delete_deployment_status
+        name: Delete Github created deployment status
+        if: ${{ inputs.branch-ref != inputs.base-branch }}
+        continue-on-error: true
+        with:
+          ref: ${{ inputs.base-branch }}
+          token: ${{steps.app-token.outputs.token}}
+          environment: ${{ matrix.environment }}
+          onlyRemoveDeployments: true
+
+
+
+      - uses: actions/download-artifact@v3
+        id: download_artifacts
+        continue-on-error: true
+        with:
+          name: build-artifacts-${{inputs.domain}}
+          path: artifacts
+
+      - name: Export Datadog Environment Variables
+        if: ${{ inputs.metrics-provider == 'datadog' && steps.download_artifacts.outcome == 'success'}}
+        run: |
+          echo "SFPOWERSCRIPTS_DATADOG=true" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_HOST=${{ secrets.DATADOG_HOST }}" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_API_KEY=${{ secrets.DATADOG_API_KEY }}" >> $GITHUB_ENV
+
+      - name: Lock enviroment
+        uses: ben-z/gh-action-mutex@v1.0-alpha-7
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        with:
+          repo-token: ${{ secrets.NPM_TOKEN }}
+          branch: ${{ matrix.environment }}-mutex
+
+      - name: "Authenticate Dev Hub"
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        run: |
+          echo "${{ secrets.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+          sfp org login -f authfile -a devhub
+
+      - name: Authenticate to ${{ matrix.environment }}
+        id: handle-auth
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        uses: bendoya-project/sfops-gh-actions/authToEnvironment@main
+        with:
+          DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          SB_SFDX_AUTH_URL: ${{ secrets.SB_SFDX_AUTH_URL }}
+          environment: ${{ matrix.environment }}
+          org-name: ${{ vars.SBXNAME }}
+          environment-profile: ${{ matrix.environment }}
+
+      - name: Install additional plugins if any
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        run: |
+          if [[ -n "${{ inputs.additional-plugins }}" ]]; then
+              IFS=',' read -ra plugins <<< "${{ inputs.additional-plugins }}"
+              for plugin in "${plugins[@]}"; do
+                  echo "Installing $plugin"
+                  echo 'y' | sfdx plugins:install $plugin
+              done
+          fi
+
+      - name: "Deploy to ${{ matrix.environment }}"
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        id: deploy
+        run: |
+         sfp install -u ${{ matrix.environment }}   --skipifalreadyinstalled  -g "::group::,::endgroup::"
+
+      - uses: actions/create-github-app-token@v1
+        if: always()
+        name: Refresh Github App Token
+        id: app-token-refreshed
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+
+      - name: "Run package version reporter"
+        uses: bendoya-project/sfops-gh-actions/packageversionReporter@main
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        with:
+          alias: ${{ matrix.environment }}
+          env-name: ${{ matrix.environment }}
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+          gh_token: ${{ steps.app-token-refreshed.outputs.token }}
+
+      - uses: mshick/add-pr-comment@v2
+        name: Report Comment on originating PR
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        with:
+          allow-repeats: false
+          message-id: ${{inputs.domain}}
+          refresh-message-position: true
+          repo-token: ${{ steps.app-token-refreshed.outputs.token }}
+          message: |
+            This work item for issue ${{inputs.branch-ref}} with ${{ github.event.issue.number }}  is now deployed to ${{ matrix.environment}}
+
+      - uses: bendoya-project/sfops-gh-actions/deploymentStatusUpdater@main
+        id: set_deployment_status_sucess
+        name: Update deployment status to sucess
+        if: ${{ steps.deploy.outcome == 'success'  || steps.deploy.outcome == 'skipped'  }}
+        with:
+            ref: ${{ inputs.branch-ref }}
+            token: ${{steps.app-token-refreshed.outputs.token}}
+            environment: ${{ matrix.environment }}
+            setDeploymentAsSuccess: "true"
+            descriptionFilter: ${{ inputs.domain }}
+
+      - uses: bendoya-project/sfops-gh-actions/deploymentStatusUpdater@main
+        if: ${{ always() && ( steps.deploy.outcome == 'failure'  || steps.deploy.outcome == 'cancelled')}}
+        id: set_deployment_status_failure
+        name: Update deployment status to failure
+        with:
+            ref: ${{ inputs.branch-ref }}
+            token: ${{steps.app-token-refreshed.outputs.token}}
+            environment: ${{ matrix.environment }}
+            setDeploymentAsFailure: "true"
+            descriptionFilter: ${{ inputs.domain }}
+
+      - uses: bendoya-project/sfops-gh-actions/checkActions@main
+        name: 'Update Checks'
+        id: update-check
+        if: ${{ vars.SFOPS_BRANCH_DEPLOY == 'true' }}
+        continue-on-error: true
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          name: 'Deployments to Test Environments'
+          status: 'completed'
+          check_id: -1
+          sha:   ${{ inputs.branchname }}
+          conclusion: 'success'
+          action_url: 'https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}'
+         
+
+
+  comment_issue_on_error:
+    runs-on: ubuntu-latest
+    needs:  deploy-to-test-orgs
+    if: always() && ( needs.deploy-to-test-orgs.result == 'failure' || needs.deploy-to-test-orgs.result == 'cancelled' || needs.deploy-to-test-orgs.result == 'skipped')
+    steps:
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: "Get installation token for sfopsbot"
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+      - uses: mshick/add-pr-comment@v2
+        with:
+          allow-repeats: false
+          message-id: ${{inputs.domain}}
+          refresh-message-position: true
+          repo-token: ${{ steps.app-token.outputs.token }}
+          message: |
+            Apologies, it seems we ran into an issue, This would need your manual attention please check the job run
+            at the link https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}

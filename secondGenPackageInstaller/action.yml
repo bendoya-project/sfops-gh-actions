@@ -1,0 +1,31 @@
+name: "Install a managed or unlocked package in the target org"
+description: "Installs a package in the target org if not already installed"
+inputs:
+  target-org:
+    description: "Username or alias of the target org"
+    required: true
+  devhub:
+    description: "Username or alias of the devhub org"
+    required: true
+  packages:
+    description: "ID and Alias of the package version to installed  in format <packageId>:<alias> serpated by comas"
+    required: true
+  installation-keys:
+    description: "Installation key for key-protected package"
+    required: false
+  force-install:
+    description: "Forcefully install the package even if it is already installed"
+    required: false
+    default: "false"
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        node $GITHUB_ACTION_PATH/dist/projectCreator/index.js -p "${{ inputs.packages }}" -n dependencyPackage
+        cd dependencyPackage
+        if [ -n "${{ inputs.installation-keys }}" ]; then
+          sfp dependency:install -u ${{ inputs.target-org }} -v ${{ inputs.devhub }} -k "${{ inputs.installation-keys }}"
+        else
+          sfp dependency:install -u ${{ inputs.target-org }} -v ${{ inputs.devhub }}
+        fi
+      shell: bash

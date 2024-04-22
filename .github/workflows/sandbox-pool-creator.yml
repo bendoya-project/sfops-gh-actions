@@ -1,0 +1,85 @@
+name: "Create CI Sandboxes"
+on:
+  workflow_call:
+    inputs:
+      path-to-config:
+         description: The path to sandbox pool config
+         type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      dashboard-repo:
+        description: "Target repo to submit package version report as HTML"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+
+jobs:
+
+  create-ci-sandbox:
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    timeout-minutes: 720 #Set to Maximum Time out
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+            node-version: "18" 
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+
+      - name: Export Datadog Environment Variables
+        if: ${{ inputs.metrics-provider == 'datadog'}}
+        run: |
+          echo "SFPOWERSCRIPTS_DATADOG=true" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_HOST=${{ secrets.DATADOG_HOST }}" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_API_KEY=${{ secrets.DATADOG_API_KEY }}" >> $GITHUB_ENV
+
+
+      - name: 'Authenticate DevHub'
+        run: |
+              echo "${{ secrets.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+              sfp org login -f authfile -a devhub
+
+      #Create a sandbox
+      - name: 'Create CI Sandboxes'
+        uses:  bendoya-project/sfops-gh-actions/createCISandboxes@main
+        with:
+          pathToPoolConfigFile: ${{ inputs.path-to-config }}
+          devhub_sfdx_auth_url: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          gh_token: ${{ steps.app-token.outputs.token }}
+
+      #Update sandbox status
+      - name: 'Update Sandbox status '
+        uses:  bendoya-project/sfops-gh-actions/sandboxStatusReporter@main
+        continue-on-error: true
+        with:
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+          gh_token:  ${{ steps.app-token.outputs.token }}
+
+
+
+

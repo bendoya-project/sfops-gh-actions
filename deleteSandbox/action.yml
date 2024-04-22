@@ -1,0 +1,56 @@
+name: "Delete a Sandbox"
+description: "Delete a sandbox with developer license"
+
+inputs:
+  sandboxName:
+    description: "Name of the sandbox to be deleted"
+    required: true
+  devhub_sfdx_auth_url:
+    description: "Devhub SFDX Auth URL"
+    required: true
+  gh_token:
+    description: "github token to use to use operation"
+    required: true
+
+outputs:
+  DELETED:
+    description: "Sucesfully deleted the sandbox?"
+    value: ${{ steps.deleteSandbox.outputs.deleted }}
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+      shell: bash
+
+    - run: |
+        echo "${{ inputs.devhub_sfdx_auth_url }}" > ./authfile
+        sfp org login -f authfile -a devhub
+      shell: bash
+
+    - id: deleteSandbox
+      run: |
+     
+        result=$(sfp sandbox delete -n ${{ inputs.sandboxName }} -v devhub --json || true)
+        if echo "$result" | jq -e '.error' > /dev/null; then
+          # The JSON contains an "error" property.
+          errorName=$(echo "$result" | jq -r '.error.name')
+          if [ "$errorName" = "SandboxProcessResultLengthError" ]; then
+            # The error is "SandboxProcessResultLengthError".
+            echo "Sandbox already delete from backend, so returning success"
+            echo "deleted=true" >> "$GITHUB_OUTPUT"
+          else
+            # Some other error occurred.
+            echo "An error occurred: $errorName"
+            echo "deleted=false" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          # The JSON does not contain an "error" property.
+          deleted=$(echo "$result" | jq -r '.deleted')
+          echo "deleted=true" >> "$GITHUB_OUTPUT"
+        fi
+       
+      shell: bash

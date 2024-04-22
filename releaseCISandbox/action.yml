@@ -1,0 +1,24 @@
+name: "Releases an In Use CI sandbox for a pool"
+description: "Release a sandbox back to the provided pool"
+inputs:
+  pool:
+    description: "Domain the sandbox belongs to"
+    required: true
+  branch:
+    description: "Branch the pool belongs to"
+    required: true
+  gh_token: # id of input
+    description: "github token to use for commiting to repo"
+    required: true
+  sbxname:
+    description: "Name of the sandbox"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        export GH_TOKEN=${{inputs.gh_token}}
+        $GITHUB_ACTION_PATH/releaseSandbox.sh  ${{ github.repository }} ${{inputs.pool}} ${{inputs.branch}}  ${{inputs.sbxname}}
+      shell: bash
+      id: releaseCISandbox

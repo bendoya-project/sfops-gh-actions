@@ -1,0 +1,206 @@
+name: "branch-deploy"
+description: "Enabling Branch Deployments through IssueOps with GitHub Actions"
+author: "Grant Birkinbine"
+branding:
+  icon: 'git-branch'
+  color: 'gray-dark'
+inputs:
+  github_token:
+    description: The GitHub token used to create an authenticated client - Provided for you by default!
+    default: ${{ github.token }}
+    required: true
+  release-name:
+    description: The name of the release
+    required: true
+  test-envs:
+     description: The test environments where this branch will be deployed to
+     required: true
+  status:
+    description: The status of the GitHub Actions - For use in the post run workflow - Provided for you by default!
+    default: ${{ job.status }}
+    required: true
+  environment:
+    description: 'The name of the default environment to deploy to. Example: by default, if you type `.deploy`, it will assume "production" as the default environment'
+    required: false
+    default: "test"
+  environment_targets:
+    description: 'Optional (or additional) target environments to select for use with deployments. Example, "production,development,staging". Example  usage: `.deploy to development`, `.deploy to production`, `.deploy to staging`'
+    required: false
+    default: "test"
+  draft_permitted_targets:
+    description: 'Optional environments which can allow "draft" pull requests to be deployed. By default, this input option is empty and no environments allow deployments sourced from a pull request in a "draft" state. Examples: "development,staging"'
+    required: false
+    default: ""
+  environment_urls:
+    description: 'Optional target environment URLs to use with deployments. This input option is a mapping of environment names to URLs and the environment names must match the "environment_targets" input option. This option is a comma separated list with pipes (|) separating the environment from the URL. Note: "disabled" is a special keyword to disable an environment url if you enable this option. Format: "<environment1>|<url1>,<environment2>|<url2>,etc" Example: "production|https://myapp.com,development|https://dev.myapp.com,staging|disabled"'
+    required: false
+    default: ""
+  environment_url_in_comment:
+    description: 'If the environment_url detected in the deployment should be appended to the successful deployment comment or not. Examples: "true" or "false"'
+    required: false
+    default: "true"
+  production_environments:
+    description: 'A comma separated list of environments that should be treated as "production". GitHub defines "production" as an environment that end users or systems interact with. Example: "production,production-eu". By default, GitHub will set the "production_environment" to "true" if the environment name is "production". This option allows you to override that behavior so you can use "prod", "prd", "main", "production-eu", etc. as your production environment name. ref: https://github.com/github/branch-deploy/issues/208'
+    required: false
+    default: "production"
+  reaction:
+    description: 'If set, the specified emoji "reaction" is put on the comment to indicate that the trigger was detected. For example, "rocket" or "eyes"'
+    required: false
+    default: "eyes"
+  trigger:
+    description: 'The string to look for in comments as an IssueOps trigger. Example: ".deploy"'
+    required: false
+    default: "sfops test"
+  noop_trigger:
+    description: 'The string to look for in comments as an IssueOps noop trigger. Example: ".noop"'
+    required: false
+    default: ".noop"
+  lock_trigger:
+    description: 'The string to look for in comments as an IssueOps lock trigger. Used for locking branch deployments on a specific branch. Example: ".lock"'
+    required: false
+    default: "sfops lock"
+  unlock_trigger:
+    description: 'The string to look for in comments as an IssueOps unlock trigger. Used for unlocking branch deployments. Example: ".unlock"'
+    required: false
+    default: "sfops unlock"
+  help_trigger:
+    description: 'The string to look for in comments as an IssueOps help trigger. Example: ".help"'
+    required: false
+    default: ".help"
+  lock_info_alias:
+    description: 'An alias or shortcut to get details about the current lock (if it exists) Example: ".info"'
+    required: false
+    default: "sfops info"
+  permissions:
+    description: 'The allowed GitHub permissions an actor can have to invoke IssueOps commands - Example: "write,maintain,admin"'
+    required: true
+    default: "write,maintain,admin"
+  param_separator:
+    description: 'The separator to use for parsing parameters in comments in deployment requests. Parameters will are saved as outputs and can be used in subsequent steps'
+    required: false
+    default: "|"
+  global_lock_flag:
+    description: 'The flag to pass into the lock command to lock all environments. Example: "--global"'
+    required: false
+    default: "--global"
+  stable_branch:
+    description: 'The name of a stable branch to deploy to (rollbacks). Example: "main"'
+    required: false
+    default: "main"
+  update_branch:
+    description: 'Determine how you want this Action to handle "out-of-date" branches. Available options: "disabled", "warn", "force". "disabled" means that the Action will not care if a branch is out-of-date. "warn" means that the Action will warn the user that a branch is out-of-date and exit without deploying. "force" means that the Action will force update the branch. Note: The "force" option is not recommended due to Actions not being able to re-run CI on commits originating from Actions itself'
+    required: false
+    default: "warn"
+  required_contexts:
+    description: 'Manually enforce commit status checks before a deployment can continue. Only use this option if you wish to manually override the settings you have configured for your branch protection settings for your GitHub repository. Default is "false" - Example value: "context1,context2,context3" - In most cases you will not need to touch this option'
+    required: false
+    default: "false"
+  skip_ci:
+    description: 'A comma separated list of environments that will not use passing CI as a requirement for deployment. Use this option to explicitly bypass branch protection settings for a certain environment in your repository. Default is an empty string "" - Example: "development,staging"'
+    required: false
+    default: ""
+  skip_reviews:
+    description: 'A comma separated list of environment that will not use reviews/approvals as a requirement for deployment. Use this options to explicitly bypass branch protection settings for a certain environment in your repository. Default is an empty string "" - Example: "development,staging"'
+    required: false
+    default: ""
+  allow_forks:
+    description: 'Allow branch deployments to run on repository forks. If you want to harden your workflows, this option can be set to false. Default is "true"'
+    required: false
+    default: "true"
+  admins:
+    description: 'A comma separated list of GitHub usernames or teams that should be considered admins by this Action. Admins can deploy pull requests without the need for branch protection approvals. Example: "monalisa,octocat,my-org/my-team"'
+    required: false
+    default: "false"
+  admins_pat:
+    description: 'A GitHub personal access token with "read:org" scopes. This is only needed if you are using the "admins" option with a GitHub org team. For example: "my-org/my-team"'
+    required: false
+    default: "false"
+  merge_deploy_mode:
+    description: This is an advanced option that is an alternate workflow bundled into this Action. You can control how merge commits are handled when a PR is merged into your repository's default branch. If the merge commit SHA matches the latest deployment for the same environment, then the 'continue' output will be set to 'false' which indicates that a deployment should not be performed again as the latest deployment is identical. If the merge commit SHA does not match the latest deployment for the same environment, then the 'continue' output will be set to 'true' which indicates that a deployment should be performed. With this option, the 'environment' output is also set for subsequent steps to reference
+    required: false
+    default: "false"
+  unlock_on_merge_mode:
+    description: This is an advanced option that is an alternate workflow bundled into this Action. You can optionally use this mode in a custom workflow to automatically release all locks that came from a pull request when the pull request is merged. This is useful if you want to ensure that locks are not left behind when a pull request is merged.
+    required: false
+    default: "false"
+  skip_completing:
+    description: 'If set to "true", skip the process of completing a deployment. You must manually create a deployment status after the deployment is complete. Default is "false"'
+    required: false
+    default: "false"
+  deploy_message_path:
+    description: 'The path to a markdown file which is used as a template for custom deployment messages. Example: ".github/deployment_message.md"'
+    required: false
+    default: ".github/deployment_message.md"
+  sticky_locks:
+    description: 'If set to "true", locks will not be released after a deployment run completes. This applies to both successful, and failed deployments.Sticky locks are also known as "hubot style deployment locks". They will persist until they are manually released by a user, or if you configure another workflow with the "unlock on merge" mode to remove them automatically on PR merge.'
+    required: false
+    default: "false"
+  sticky_locks_for_noop:
+    description: 'If set to "true", then sticky_locks will also be used for noop deployments. This can be useful in some cases but it often leads to locks being left behind when users test noop deployments.'
+    required: false
+    default: "false"
+  allow_sha_deployments:
+    description: 'If set to "true", then you can deploy a specific sha instead of a branch. Example: ".deploy 1234567890abcdef1234567890abcdef12345678 to production" - This is dangerous and potentially unsafe, view the docs to learn more: https://github.com/github/branch-deploy/blob/main/docs/sha-deployments.md'
+    required: false
+    default: "false"
+  disable_naked_commands:
+    description: 'If set to "true", then naked commands will be disabled. Example: ".deploy" will not trigger a deployment. Instead, you must use ".deploy to production" to trigger a deployment. This is useful if you want to prevent accidental deployments from happening. Read more about naked commands here: https://github.com/github/branch-deploy/blob/main/docs/naked-commands.md'
+    required: false
+    default: "false"
+outputs:
+  continue:
+    description: 'The string "true" if the deployment should continue, otherwise empty - Use this to conditionally control if your deployment should proceed or not'
+  triggered:
+    description: 'The string "true" if the trigger was found, otherwise the string "false"'
+  comment_body:
+    description: The comment body
+  issue_number:
+    description: The issue number of the pull request (or issue) that was commented on
+  actor:
+    description: The GitHub handle of the actor that invoked the IssueOps command
+  environment:
+    description: The environment that has been selected for a deployment
+  params:
+    description: The raw parameters that were passed into the deployment command (see param_separator)
+  noop:
+    description: 'The string "true" if the noop trigger was found, otherwise the string "false" - Use this to conditionally control whether your deployment runs as a noop or not'
+  sha:
+    description: The sha of the branch to be deployed
+  base_ref:
+    description: The base ref that the pull request is merging into
+  ref:
+    description: The ref (branch or sha) to use with deployment
+  comment_id:
+    description: The comment id which triggered this deployment
+  type:
+    description: "The type of trigger that was detected (examples: deploy, lock, unlock, lock-info-alias, help)"
+  fork:
+    description: 'The string "true" if the pull request is a fork, otherwise "false"'
+  fork_ref:
+    description: 'The true ref of the fork'
+  fork_label:
+    description: 'The API label field returned for the fork'
+  fork_checkout:
+    description: 'The console command presented in the GitHub UI to checkout a given fork locally'
+  fork_full_name:
+    description: 'The full name of the fork in "org/repo" format'
+  deployment_id: 
+    description: The ID of the deployment created by running this action
+  environment_url:
+    description: The environment URL detected and used for the deployment (sourced from the environment_urls input)
+  initial_reaction_id:
+    description: The reaction id for the initial reaction on the trigger comment
+  actor_handle:
+    description: The handle of the user who triggered the action
+  global_lock_claimed:
+    description: 'The string "true" if the global lock was claimed'
+  global_lock_released:
+    description: 'The string "true" if the global lock was released'
+  unlocked_environments:
+    description: 'Only exposed when using the "unlock on merge" mode - This output variable will contain a comma separated list of the environments that were unlocked'
+  sha_deployment:
+    description: 'If "allow_sha_deployments" is enabled, and a sha deployment is performed instead of a branch deployment, this output variable will contain the sha that was deployed. Otherwise, this output variable will be empty'
+runs:
+  using: "node20"
+  main: "dist/index.js"
+  post: "dist/index.js"

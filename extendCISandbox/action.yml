@@ -1,0 +1,48 @@
+name: "Extend an existing review sandbox assigned to an issue"
+description: "Extend an existing review sandbox assigned to an issue"
+inputs:
+  issue-number:
+     description: "The issue number where this sandbox will be used"
+     required: true
+  gh_token: # id of input
+    description: "github token to use for commiting to repo"
+    required: true
+outputs:
+  sbxname:
+    description: "Name of the sandbox"
+    value: ${{ steps.removeAsssignment.outputs.SANDBOX_NAME }}
+runs:
+  using: "composite"
+  steps:
+    # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+      shell: bash
+
+    - run: |
+        gh extension install heaths/gh-merge-json
+      shell: bash
+
+    - name: Lock to get exclusive access to pool var
+      uses: bendoya-project/sfops-gh-actions/lockResource@main
+      id: lockResource
+      with:
+        branch: pool
+        repo-token: ${{ inputs.gh_token }}
+
+    - run: |
+        export GH_TOKEN=${{inputs.gh_token}}
+        sbx_name=$(node $GITHUB_ACTION_PATH/extendSandbox.js  ${{github.repository}} ${{ inputs.issue-number }} )
+        echo "SANDBOX_NAME=$sbx_name" >> "$GITHUB_OUTPUT"
+      shell: bash
+      id: extendAssignment
+
+    - name: Release locked access to pool vars
+      uses: bendoya-project/sfops-gh-actions/unlockResource@main
+      if: always()
+      with:
+        branch: pool
+        repo-token: ${{ inputs.gh_token }}
+        ticket_id: ${{ steps.lockResource.outputs.ticket_id }}

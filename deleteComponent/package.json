@@ -1,0 +1,19 @@
+{
+  "name": "deletecomponent",
+  "version": "0.0.1",
+  "description": "Deletes a component using an org dependent package",
+  "main": "component-remover.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "ncc build component-remover.js --license licenses.txt"
+  },
+  "author": "azlam-abdulsalam",
+  "license": "SEE LICENSE IN LICENSE",
+  "dependencies": {
+    "fs-extra": "^11.1.1",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "0.38.1"
+  }
+}

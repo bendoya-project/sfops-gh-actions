@@ -1,0 +1,20 @@
+{
+  "name": "pr-status-reporter",
+  "version": "1.0.0",
+  "description": "",
+  "main": "prStatusReporter.js",
+  "scripts": {
+    "build": "ncc build prStatusReporter.js -o dist/prStatusReporter && ncc build metadataInfoAugumenter.js -o dist/metadataInfoAugumenter",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "BSL",
+  "dependencies": {
+    "@octokit/plugin-retry": "^6.0.1",
+    "@octokit/rest": "^20.0.2",
+    "@salesforce/source-deploy-retrieve": "^10.3.3"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.1"
+  }
+}

@@ -1,0 +1,25 @@
+name: "Changelog to Html Reporter"
+description: "Convert changelog.json to html and commit to repo"
+inputs:
+  source-branch:
+    description: "name of the branch from which to read changelog.json"
+    required: true
+  domain:
+    description: "list of domains of the changelog, separated by commas"
+    required: true
+  workitem-url:
+    description: "url of the jira board"
+    required: true
+  environment:
+    description: "environment of the release"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        git fetch --all
+        git show origin/${{inputs.source-branch}}:${{ inputs.domain }}/releasechangelog.json > releasechangelog.json
+        node  $GITHUB_ACTION_PATH/workItemMarkDownGenerator.js releasechangelog.json ${{ inputs.domain }} ${{inputs.environment}}  ${{inputs.workitem-url}}
+      shell: bash

@@ -1,0 +1,43 @@
+name: "Report status of issues"
+description: "Report status of issues"
+inputs:
+  dashboard-repo:
+    description: "name of the repo to report to, will create a folder packageVersionReports in the target repo"
+    required: true
+  gh_token:
+    description: "github token to use for commiting to repo"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+        export SF_DISABLE_LOG_FILE=true
+      shell: bash
+
+    - run: |
+        node $GITHUB_ACTION_PATH/dist/prStatusReporter/index.js ${{ github.repository_owner }} ${{ github.event.repository.name }}  _data/prStatus.json ${{ inputs.gh_token }}
+      shell: bash
+      id: prStatusReporter
+
+    - run: |
+        export SF_DISABLE_LOG_FILE=true
+        node $GITHUB_ACTION_PATH/dist/metadataInfoAugumenter/index.js  _data/prStatus.json 
+      shell: bash
+      continue-on-error: true
+      id: metadataInfoAugumenter
+
+    - name: "Push changes to dashboard-repo"
+      id: updateGitRepo
+      uses: bendoya-project/sfops-gh-actions/updateGitRepo@main
+      with:
+        target-repo: ${{ inputs.dashboard-repo }}
+        source-dir: _data
+        target-dir: _data
+        commit-message: "Updated information about prs"
+        update-release-names: false
+        gh_token: ${{ inputs.gh_token }}

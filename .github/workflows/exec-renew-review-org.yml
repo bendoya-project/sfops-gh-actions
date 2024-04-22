@@ -1,0 +1,121 @@
+name: Renew-Review-Org
+
+
+on:
+  workflow_call:
+    inputs:
+      issue-title: 
+        description: "The title of the issue"
+        type: "string"
+      issue-body: 
+         description: "The body of the issue"
+         type: "string"
+      issue-number:
+         description: "The number of the issue"
+         type: "string"
+      dashboard-repo:
+        description: "Target repo to submit package version report as HTML"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"  
+  
+  
+jobs:
+  renew-sandbox:
+    runs-on: ubuntu-latest
+    name: 'Renew review org'
+    steps:
+      - name: Add a reaction
+        uses: GrantBirki/comment@e6bf4bc177996c9572b4ddb98b25eb1a80f9abc9 # pin@v2.0.7
+        with:
+          comment-id: ${{ github.event.comment.id}}
+          reactions: eyes
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: "Get installation token for sfopsbot"
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+
+      - uses: xt0rted/pull-request-comment-branch@v2
+        name: Figure out the commit refs
+        id: comment-branch
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.comment-branch.outputs.head_ref}}
+          fetch-depth: 0
+
+
+      - name: Remove current assignment
+        uses:  bendoya-project/sfops-gh-actions/removeAssignmentCISandbox@main
+        with:
+         issue-number: ${{ inputs.issue-number }}
+         gh_token:  ${{ steps.app-token.outputs.token }}
+
+
+      - name: Create Message Body as File
+        id: message_template_success
+        if: success()
+        run: |
+          printf "\nHello @${{ github.event.issue.user.login }} :wave:\n" >> message.md
+          printf "\n Your request to remove the assignment of  the review sandbox for the ${{ github.event.issue.number}} is succesfull" >> message.md
+
+
+      - name: Create Message Body as File
+        id: message_template_error
+        if: failure()
+        run: |
+          printf "\nHello @${{ github.event.issue.user.login }} :wave:\n" >> message.md
+          printf "\n Your request to remove the assignment of  the review sandbox for the ${{ github.event.issue.number}} is unsuccesfull" >> message.md
+
+                       
+      - uses: mshick/add-pr-comment@v2
+        name: Print Commment
+        if: success() || failure()
+        with:
+          allow-repeats: false
+          repo-token: ${{ steps.app-token.outputs.token }}
+          message-id: renew-${{ inputs.issue-number }}
+          refresh-message-position: true
+          message-path: |
+             message.md        
+
+      # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+      - id: set_gh_token
+        name: Setup GH TOKEN
+        if: success() || failure()
+        run: |
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+          export GH_TOKEN=${{ steps.app-token.outputs.token }}
+          echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Reopen PR
+        id: reopen_pr
+        if: success() || failure()
+        run: |
+          gh pr close ${{ github.event.issue.number }} --repo ${{ github.event.repository.full_name }}  
+          gh pr reopen ${{ github.event.issue.number }} --repo ${{ github.event.repository.full_name }} -c "Attempting a reopen of the PR to re trigger a check and assign a new review sandbox"
+          

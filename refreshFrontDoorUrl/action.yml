@@ -1,0 +1,48 @@
+name: "Refreshes the frontdoor url"
+description: "Refreshes the frontdoor url"
+inputs:
+  devhub_sfdx_auth_url:
+    description: "Devhub SFDX Auth URL"
+    required: true
+  dashboard-repo:
+    description: "name of the repo to report to, will create a folder packageVersionReports in the target repo"
+    required: true
+  gh_token: 
+    description: "github token to use for commiting to repo"
+    required: true
+
+
+runs:
+  using: "composite"
+  steps:
+
+    - run: |
+        echo "${{ inputs.devhub_sfdx_auth_url }}" > ./authfile
+        sfp org login -f authfile -a devhub
+      shell: bash
+      id: authDevhub
+
+    - run: |
+        export GH_TOKEN=${{inputs.gh_token}}
+        gh extension install heaths/gh-merge-json
+      shell: bash
+
+
+    - run: |
+        export GH_TOKEN=${{inputs.gh_token}}
+        node $GITHUB_ACTION_PATH/dist/index.js ${{github.repository}} devhub ${{ inputs.gh_token }} _data/sandboxStatus/frontDoorUrl.json
+      shell: bash
+      id: refreshFrontDoorUrl
+
+
+    - name: "Push changes to dashboard-repo"
+      id: updateGitRepo
+      uses: bendoya-project/sfops-gh-actions/updateGitRepo@main
+      with:
+        target-repo: ${{ inputs.dashboard-repo }}
+        source-dir: _data
+        target-dir: _data
+        commit-message: "Updated information about front door urls"
+        update-release-names: false
+        gh_token: ${{ inputs.gh_token }}
+

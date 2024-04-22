@@ -1,0 +1,12 @@
+name: 'Get First Commit SHA'
+description: 'Get the SHA of the first commit in a pull request branch'
+inputs:
+  github_token:
+    description: 'GitHub token for authentication'
+    required: true
+outputs:
+  first_commit_sha:
+    description: 'SHA of the first commit in the pull request branch'
+runs:
+  using: 'node20'
+  main: 'dist/index.js'

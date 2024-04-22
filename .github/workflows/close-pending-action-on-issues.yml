@@ -1,0 +1,86 @@
+name: 'IssueOps - Close any Pending Actions on Issues'
+
+on:
+  workflow_call:
+     inputs:
+        issue-title: 
+          description: "The title of the issue"
+          type: "string"
+        issue-body: 
+          description: "The body of the issue"
+          type: "string"
+        issue-number:
+          description: "The number of the issue"
+          type: "string"
+        dashboard-repo: 
+          description: Dashboard repo where any reports need to be push
+          type: "string"
+        sfopsbot-app-id: 
+          description: The App id of the bot used for this workflow_call
+          type: "string"
+        metrics-provider:
+          description: "The metrics provider to be used"
+          type: "string"        
+     secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    steps:
+
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+    
+      - name: Find Comment with Run Info
+        uses: peter-evans/find-comment@v2
+        id: fc
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body-includes: "action at this link:"
+          direction: last
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: 'Cancel any actions running or waiting on the comment'	
+        uses: bendoya-project/sfops-gh-actions/cancelActionsOnComments@main
+        with:
+         issue-number: ${{ github.event.issue.number }}
+         repo: ${{github.repository}}
+         gh_token: ${{ steps.app-token.outputs.token }}
+
+  delevate-access:
+   uses: bendoya-project/sfops-gh-actions/.github/workflows/exec-elevate-access-level.yml@main
+   with:
+     issue-title: ${{ inputs.issue-title }}
+     issue-body: ${{ inputs.issue-body }}
+     issue-number: ${{ inputs.issue-number }}   
+     sfopsbot-app-id: ${{ inputs.sfopsbot-app-id }}
+     metrics-provider: ${{ inputs.metrics-provider }}
+     event: "issue_closed"
+   secrets:
+      DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+      DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+      DATADOG_HOST: ${{ secrets.DATADOG_HOST }}
+      SFOPSBOT_APP_PRIVATE_KEY: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}

@@ -1,0 +1,45 @@
+name: "Fetch all environments"
+description: "Fetch all release names given a path to the directory that contains release defns"
+inputs:
+  gh_token:
+    description: "github token to fetch details from the repo"
+    required: true
+  filter:
+    description: "filter environments by  type of envs"
+    required: false
+outputs:
+  allEnvs:
+    description: "Required environments as comma seperated string"
+    value: ${{ steps.fetchAllEnvs.outputs.envs }}
+  allEnvsAsJSON:
+    description: "Required environments as JSON"
+    value: ${{ steps.fetchAllEnvs.outputs.envsAsJSONOutput }}
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        # Compute all envs
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+
+        export GH_TOKEN=${{inputs.gh_token}}
+
+        # Fetch All envs and convert to lower case and comma seperated  
+        envs=$($GITHUB_ACTION_PATH/fetchAllEnvs.sh ${{github.repository}} ${{inputs.filter}} )
+
+        IFS=',' read -ra json_array <<< "$envs"
+
+        json_output="["
+        for i in "${!json_array[@]}"; do
+          if [ "$i" -gt 0 ]; then
+            json_output+=","
+          fi
+          json_output+="\"${json_array[$i]}\""
+        done
+        json_output+="]"
+
+        echo "envs=$envs" >> $GITHUB_OUTPUT
+        echo "envsAsJSONOutput=$json_output" >> $GITHUB_OUTPUT
+
+      shell: bash
+      id: fetchAllEnvs

@@ -1,0 +1,52 @@
+name: "Validate Jira Taks"
+on:
+  workflow_call:
+    inputs:
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         required: true
+         type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      jira-user:
+        description: 'JIRA username. Can be passed in using {{ vars.JIRA_USER }}'
+        required: true
+        type: "string"
+      jira-base-url:
+        description: 'The subdomain of JIRA cloud that you use to access it. {{ vars.SFOPS_ISSUETRACKER_URL_BASE }}"'
+        required: true
+        type: "string"
+    secrets:
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+      SFOPSBOT_JIRA_TOKEN:
+          description: "API Token used to access the JIRA REST API. Must have read access to your JIRA Projects & Issues."
+
+
+jobs:
+  jira-lint:
+    runs-on: ubuntu-latest
+    steps:
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+           app-id: ${{ inputs.sfopsbot-app-id }}
+           private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+
+
+      - uses: bendoya-project/sfops-gh-actions/jiraLinter@main
+        name: jira-lint
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          jira-user: ${{ inputs.jira-user }}
+          jira-base-url: ${{ inputs.jira-base-url }}
+          jira-token: ${{ secrets.SFOPSBOT_JIRA_TOKEN }}
+          skip-branches: '^(release|release\/v\d+)$'
+          skip-comments: true
+          pr-threshold: 1000

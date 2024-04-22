@@ -1,0 +1,23 @@
+name: "Figure out impacted release defns"
+description: "Figures out impacted release defns based on git diff"
+inputs:
+  pathToReleaseDefns:
+    description: "The path to the directory that contains release defns"
+    required: true
+  from-commit:
+    description: "The commit id from where changes should be analyzed"
+    required: true
+  to-commit:
+    description: "The commit id to which changes should be analyzed"
+    required: true
+  filterby:
+    description: "Only return if the provided release defn is impacted"
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        sfp impact:releaseconfig --basebranch=${{ inputs.from-commit }} --releaseconfig=${{ inputs.pathToReleaseDefns }} 
+      shell: bash
+      id: computeImpactedReleaseDefns

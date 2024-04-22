@@ -1,0 +1,62 @@
+name: "Check a CI Sandbox Status"
+description: "Check a status of CI Sandbox and add to the pool if ready, Also deactivate all other users"
+
+inputs:
+  devhub_sfdx_auth_url:
+    description: "Devhub SFDX Auth URL"
+    required: true
+  usersToBeActivated:
+    description: "Comma separated list of users to be activated"
+    required: true
+  pathToPoolConfigFile:
+    description: "Path to pool config file"
+    required: true
+  gh_token:
+    description: "GitHub Token"
+    required: true
+  metrics-provider:
+    description: "The metrics provider to be used"
+  DATADOG_API_KEY:
+    description: "Datadog api key to report metrics"
+  DATADOG_HOST:
+    description: "Datadog host to report metrics"
+
+runs:
+  using: "composite"
+  steps:
+
+    # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+      shell: bash
+
+    - run: |
+        gh extension install heaths/gh-merge-json
+      shell: bash
+
+    - run: |
+        echo "${{ inputs.devhub_sfdx_auth_url }}" > ./authfile
+        sfp org login -f authfile -a devhub
+      shell: bash
+
+    - id: checkSandboxStatus
+      run: |
+        echo "----------------------------------------------------"
+        echo "🤖  sfops github actions"
+        echo "🚧  Action: checkCISandboxStatus"
+        echo "----------------------------------------------------"
+        echo ""
+
+
+        if [ '${{ inputs.metrics-provider }}' = 'datadog' ]; then
+         export "SFPOWERSCRIPTS_DATADOG=true" 
+         export "SFPOWERSCRIPTS_DATADOG_HOST=${{ inputs.DATADOG_HOST }}"
+         export "SFPOWERSCRIPTS_DATADOG_API_KEY=${{ inputs.DATADOG_API_KEY }}"
+        fi
+
+        node $GITHUB_ACTION_PATH/dist/checkSandboxStatus/index.js  $GITHUB_ACTION_PATH  ${{ inputs.gh_token }}   ${{ github.repository_owner }} ${{ github.event.repository.name }}  devhub  ${{ inputs.pathToPoolConfigFile }}
+        node $GITHUB_ACTION_PATH/expireOldSandboxes.js  ${{ github.repository }} ${{ inputs.pathToPoolConfigFile }} 
+        node $GITHUB_ACTION_PATH/deleteExpiredSandboxes.js ${{ github.repository }} devhub
+      shell: bash

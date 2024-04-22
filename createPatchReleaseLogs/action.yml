@@ -1,0 +1,68 @@
+#always assume it needs sfp docker image as the run time
+
+name: "Find Release Defn and copy associated files into the branch directory"
+description: "Find release defn when multiple branches are included"
+inputs:
+  releaseDefn:
+    description: "The release defn that need to be searched for"
+    required: true
+  domain:
+    description: "Name of the domain where the release defn should be searched for"
+    required: true
+  branch:
+    description: "the branch where release defns are stored"
+    required: false
+  patchDirectory:
+    description: "the directory where the patch files are stored"
+    required: false
+  gh_token:
+    description: "github token to use for committing to repo"
+    required: true
+  dashboard-repo:
+    description: "name of the repo to report to, will create a folder packageVersionReports in the target repo"
+    required: true
+outputs:
+   releaseDefn:
+     value: ${{ steps.findReleaseDefn.outputs.RELEASE_DEFN_PATH}}
+     description: Path to Release Defintion
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        git fetch --all
+        
+        # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+        export GH_TOKEN=${{inputs.gh_token}}
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+
+        pathToReleaseDefn=$(node $GITHUB_ACTION_PATH/dist/findReleaseDefn/index.js -r ${{inputs.releaseDefn}} -d ${{inputs.domain}} -b ${{inputs.branch}} -w $GITHUB_WORKSPACE -p ${{inputs.patchDirectory}} )
+        echo $pathToReleaseDefn 
+        echo "RELEASE_DEFN_PATH=$pathToReleaseDefn" >> "$GITHUB_OUTPUT"
+        
+        # Copy Release Logs from prod
+        node $GITHUB_ACTION_PATH/dist/copyReleaseLogs/index.js -b releaselogs-prod -d ${{inputs.domain}} -p "${{inputs.patchDirectory}}/${{inputs.domain}}"
+
+        node $GITHUB_ACTION_PATH/dist/updateGitRepo/index.js --gh_token ${{ inputs.gh_token }} --github_repo_url ${{ github.repository }} --dir_to_copy  ${{inputs.patchDirectory}}  --target_dir  ${{inputs.patchDirectory}} --commit_message "[ci skip] Patched ReleaseDefns" 
+        
+        # Create a hotfix directory if it does not exist
+        mkdir -p _data/hotfixes
+        echo '{"branch": "release-${{inputs.releaseDefn}}-patch", "domain":"${{inputs.domain}}"}' > _data/hotfixes/release-${{inputs.releaseDefn}}-patch.json
+
+      shell: bash
+      id: findReleaseDefn
+
+    - name: "Push changes to dashboard-repo"
+      id: updateGitRepo
+      uses: bendoya-project/sfops-gh-actions/updateGitRepo@main
+      with:
+        target-repo: ${{ inputs.dashboard-repo }}
+        source-dir: _data
+        target-dir: _data
+        commit-message: "Updated hotfix branch information"
+        update-release-names: false
+        gh_token: ${{ inputs.gh_token }}
+
+
+

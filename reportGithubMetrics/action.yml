@@ -1,0 +1,28 @@
+#always assume it needs sfp docker image as the run time
+
+name: "Report github metric"
+description: "Report package version of an org to a folder in repo and create an html report"
+inputs:
+  gh_token:
+    description: "github token to use for commiting to repo"
+    required: true
+  metrics-provider:
+    description: "The metrics provider to be used"
+  DATADOG_API_KEY:
+    description: "Datadog api key to report metrics"
+  DATADOG_HOST:
+    description: "Datadog host to report metrics"
+
+
+runs:
+  using: "composite"
+  steps:
+
+    - run: |
+         if [ '${{ inputs.metrics-provider }}' = 'datadog' ]; then
+           export "SFPOWERSCRIPTS_DATADOG=true" 
+           export "SFPOWERSCRIPTS_DATADOG_HOST=${{ inputs.DATADOG_HOST }}"
+           export "SFPOWERSCRIPTS_DATADOG_API_KEY=${{ inputs.DATADOG_API_KEY }}"
+          fi
+          node $GITHUB_ACTION_PATH/dist/index.js ${{github.repository_owner}}  ${{ github.event.repository.name }}  ${{ inputs.gh_token }}
+      shell: bash

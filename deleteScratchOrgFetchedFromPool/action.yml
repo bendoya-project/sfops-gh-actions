@@ -1,0 +1,41 @@
+name: "Delete a ScratchOrg Fetched from pool"
+description: "Delete a scratchorg fetched from pool"
+
+inputs:
+  so_username:
+    description: "Username of the scratch org  to be deleted"
+    required: true
+  devhub_sfdx_auth_url:
+    description: "Devhub SFDX Auth URL"
+    required: true
+
+outputs:
+  DELETED:
+    description: "Sucesfully deleted the scratchorg?"
+    value: ${{ steps.deleteScratchOrg.outputs.deleted }}
+
+runs:
+  using: "composite"
+  steps:
+    - run: git config --global --add safe.directory $GITHUB_WORKSPACE
+      shell: bash
+
+    - run: |
+        echo "${{ inputs.devhub_sfdx_auth_url }}" > ./authfile
+        sfp org login -f authfile -a devhub
+      shell: bash
+
+    - id: deleteScratchOrg
+      run: |
+        # Delete the scratch org and capture exit code
+        sfp pool:org:delete -u ${{ inputs.so_username }} -v devhub
+        delete_status=$?
+
+        # If the script runs successfully, output true, else output false
+        if [ $delete_status -eq 0 ]
+        then
+          echo "deleted=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "deleted=false" >> "$GITHUB_OUTPUT"
+        fi
+      shell: bash

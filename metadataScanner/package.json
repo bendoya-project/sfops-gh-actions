@@ -1,0 +1,18 @@
+{
+  "name": "metadatascanner",
+  "version": "1.0.0",
+  "description": "",
+  "main": "duplicate.js",
+  "scripts": {
+    "build": "ncc build duplicate.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "BSL-1.1",
+  "dependencies": {
+    "@salesforce/source-deploy-retrieve": "^10.3.1"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "0.38.1"
+  }
+}

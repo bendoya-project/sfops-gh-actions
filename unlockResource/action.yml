@@ -1,0 +1,41 @@
+# action.yml
+name: "Unlock Action"
+branding:
+  icon: "lock"
+description: "A simple locking/unlocking mechanism to provide mutual exclusion in Github Actions"
+inputs:
+  repo-token:
+    description: "The token for accessing the repo."
+    required: false
+    default: ${{ github.token }}
+  repository:
+    description: "The repository path that stores the lock. E.g `ben-z/gh-action-mutex`"
+    required: false
+    default: ${{ github.repository }}
+  branch:
+    description: "The branch to use for the mutex"
+    required: false
+    default: "gh-mutex"
+  debug:
+    description: "Print debug output"
+    required: false
+    default: "false"
+  internal_checkout-location:
+    description: "[Internal] The location to store the mutex repo"
+    required: false
+    default: "/run/gh-action-mutex/repo"
+  ticket_id:
+    description: "The  id to the ticket"
+    required: false
+
+runs:
+  using: "docker"
+  image: "Dockerfile"
+  env:
+    ARG_BRANCH: ${{ inputs.branch }}
+    ARG_CHECKOUT_LOCATION: ${{ inputs.internal_checkout-location }}
+    ARG_REPOSITORY: ${{ inputs.repository }}
+    ARG_REPO_TOKEN: ${{ inputs.repo-token }}
+    ARG_DEBUG: ${{ inputs.debug }}
+    ARG_TICKET_ID: ${{ inputs.ticket_id }}
+  entrypoint: "/scripts/unlock.sh"

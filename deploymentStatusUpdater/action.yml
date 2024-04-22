@@ -1,0 +1,34 @@
+name: 'Update status of  Deployment Environment'
+description: 'Update the status of Github Deployments'
+author: "flxbl"
+branding:
+  icon: briefcase
+  color: gray-dark
+inputs:
+  token:
+    description: GitHub access token
+    required: true
+  environment:
+    description: Environment to be deleted
+    required: true
+  ref:
+    description: The `head_ref` or source branch name of the deployment to delete
+    required: false
+  onlyRemoveDeployments:
+    description: Only remove deployments, keep the environment. Defaults to false
+    required: false
+  onlyDeactivateDeployments:
+    description: Only inactive deployments, keep the environment and deployments. Defaults to false
+    required: false
+  setDeploymentAsSuccess:
+    description: Sets a deployment as sucess on given ref
+    required: false
+  setDeploymentAsFailure:
+    description: Sets a deployment as failure on given ref
+    required: false
+  descriptionFilter:
+    description: Filter deployments by descriptions
+    required: false
+runs:
+  using: 'node16'
+  main: 'dist/index.js'

@@ -1,0 +1,153 @@
+# Description: Workflow for running Apex tests on test environments and reporting the results to a dashboard repository.
+name: "Apex Test Runs"
+on:
+  workflow_call:
+    inputs:
+      dashboard-repo: 
+         description: Repo which contains the dashboard data
+         type: "string"       
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      ENV_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+      STAGING_SFDX_AUTH_URL:
+        description: "Staging Sandbox Auth URL..workaround for now"
+      PREPROD_SFDX_AUTH_URL:
+        description: "Preprod Sandbox Auth URL..workaround for now"
+      UAT_SFDX_AUTH_URL:
+        description: "Uat Sandbox Auth URL..workaround for now"
+      QA_SFDX_AUTH_URL:
+        description: "Uat Sandbox Auth URL..workaround for now"
+      IQA_SFDX_AUTH_URL:
+        description: "Uat Sandbox Auth URL..workaround for now"
+      SIT_SFDX_AUTH_URL:
+        description: "Uat Sandbox Auth URL..workaround for now"
+  
+  
+
+
+jobs:
+
+  fetch-all-envs:
+    runs-on: ubuntu-latest
+    outputs:
+      allEnvsAsJSON: ${{ steps.fetchAllEnvs.outputs.allEnvsAsJSON }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: "Get installation token for sfopsbot"
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+
+      - uses: bendoya-project/sfops-gh-actions/fetchAllEnvs@main
+        id: fetchAllEnvs
+        with:
+          gh_token: ${{ steps.app-token.outputs.token }}
+          filter: "testrun:true"
+  
+
+  test:
+    name: 'Test in  ${{matrix.environment}}'
+    runs-on: ubuntu-latest
+    needs: fetch-all-envs
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{  fromJSON(needs.fetch-all-envs.outputs.allEnvsAsJSON) }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: "Get installation token for sfopsbot"
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+         skip-token-revoke: true
+
+      - name: Fetch Environment Variables
+        id: fetch-env-vars
+        uses: raven-actions/environment-variables@v1
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          environment: ${{matrix.environment}}
+
+      - name: Authenticate to ${{matrix.environment}}
+        id: handle-auth
+        uses: bendoya-project/sfops-gh-actions/authToEnvironment@main
+        with: 
+          DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          ENV_SFDX_AUTH_URL: ${{ secrets[format('{0}_SFDX_AUTH_URL',  matrix.environment )] }}
+          org-name: ${{ steps.fetch-env-vars.outputs.SBXNAME }}
+          environment-profile: ${{matrix.environment}}
+
+      - name: Export Datadog Environment Variables
+        if: ${{ inputs.metrics-provider == 'datadog'}}
+        run: |
+          echo "SFPOWERSCRIPTS_DATADOG=true" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_HOST=${{ secrets.DATADOG_HOST }}" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_API_KEY=${{ secrets.DATADOG_API_KEY }}" >> $GITHUB_ENV
+      
+      - name: 'Run all local apex tests and report results'
+        uses: bendoya-project/sfops-gh-actions/apextestresultReporter@main
+        with:
+         alias: ${{matrix.environment}}
+         dashboard-repo: ${{ inputs.dashboard-repo }}
+         gh_token: ${{ steps.app-token.outputs.token }}
+
+    # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token-refreshed
+        name: "Get installation token for sfopsbot"
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+         skip-token-revoke: true
+
+      - name: "Fetch all Envs"
+        id: getAllEnvs
+        uses: bendoya-project/sfops-gh-actions/fetchAllEnvs@main
+        with:
+          gh_token: ${{ steps.app-token-refreshed.outputs.token}}
+          filter: "testrun:true"
+
+      - name: "Push changes to dashboard-repo"
+        id: updateGitRepo
+        uses: bendoya-project/sfops-gh-actions/updateGitRepo@main
+        with:
+          target-repo: ${{ inputs.dashboard-repo }}
+          source-dir: testresults
+          target-dir: apextestResults
+          commit-message: "Updated apex test results"
+          update-release-names: false
+          gh_token: ${{ steps.app-token-refreshed.outputs.token}}

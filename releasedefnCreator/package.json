@@ -1,0 +1,17 @@
+{
+  "name": "releasedefncreator",
+  "version": "1.0.0",
+  "description": "Action to create dynamic release defns",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "ncc build index.js"
+  },
+  "license": "BSL-1.1",
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "0.38.1"
+  }
+}

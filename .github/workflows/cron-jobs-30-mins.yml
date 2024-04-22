@@ -1,0 +1,180 @@
+
+
+name: "Cron Jobs every 30 mins"
+on:
+  workflow_call:
+    inputs:
+      users-to-be-activated:
+        description: The users to be activated in the sandbox
+        type: "string"
+      path-to-config:
+        description: The path to sandbox pool config
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      dashboard-repo:
+        description: "Target repo to submit package version report as HTML"
+        type: "string"
+      sfopsbot-app-id:
+        description: The App id of the bot used for this workflow_call
+        type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+jobs:
+  check-sandbox-status:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ inputs.sfopsbot-app-id }}
+          private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          skip-token-revoke: true
+
+      - name: "Authenticate DevHub"
+        run: |
+          echo "${{ secrets.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+          sfp org login -f authfile -a devhub
+
+      #Create a sandbox
+      - name: "Update sandox status"
+        uses: bendoya-project/sfops-gh-actions/checkCISandboxStatus@main
+        with:
+          devhub_sfdx_auth_url: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          usersToBeActivated: ${{ inputs.users-to-be-activated }}
+          pathToPoolConfigFile: ${{ inputs.path-to-config }}
+          gh_token: ${{ steps.app-token.outputs.token }}
+          metrics-provider: ${{ inputs.metrics-provider }}
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DATADOG_HOST: ${{ secrets.DATADOG_HOST }}
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token-refreshed
+        with:
+          app-id: ${{ inputs.sfopsbot-app-id }}
+          private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          skip-token-revoke: true
+
+
+      - name: "Update Sandbox status "
+        uses: bendoya-project/sfops-gh-actions/sandboxStatusReporter@main
+        continue-on-error: true
+        with:
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+          gh_token: ${{ steps.app-token-refreshed.outputs.token }}
+
+  update-scratchorg-status:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ inputs.sfopsbot-app-id }}
+          private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Report Scratch Org Status
+        uses: bendoya-project/sfops-gh-actions/scratchOrgStatusReporter@main
+        with:
+          devhub_sfdx_auth_url: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+          gh_token: ${{ steps.app-token.outputs.token }}
+
+  update-sandbox-frontdoor-url:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ inputs.sfopsbot-app-id }}
+          private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Update sandbox frontdoor url
+        uses: bendoya-project/sfops-gh-actions/refreshFrontDoorUrl@main
+        with:
+          devhub_sfdx_auth_url: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          gh_token: ${{ steps.app-token.outputs.token }}
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+
+  update-workitem-status:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ inputs.sfopsbot-app-id }}
+          private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Report env infos
+        uses: bendoya-project/sfops-gh-actions/reportEnvInfos@main
+        with:
+          gh_token: ${{ steps.app-token.outputs.token }}
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+
+      - name: Report work item status
+        uses: bendoya-project/sfops-gh-actions/prStatusReporter@main
+        with:
+          gh_token: ${{ steps.app-token.outputs.token }}
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+
+  close-elevated-access-requests-issues:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ inputs.sfopsbot-app-id }}
+          private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Close stale access issues
+        uses: bendoya-project/sfops-gh-actions/closeStaleIssuesAfterThresholdMins@main
+        with:
+          gh_token: ${{ steps.app-token.outputs.token }}
+          label: "ops-request-elevated-privileges"
+          units: hours
+          defaultThreshold: 1
+          parseString: "Provide the required duration in hours"
+ 

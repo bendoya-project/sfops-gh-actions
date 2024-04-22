@@ -1,0 +1,88 @@
+name: 'Prepare Scratch Org Pools'
+
+on:
+  workflow_call:
+    inputs:
+      git-ref:
+         description: The commit id of the git ref
+         type: "string"
+         default: ${{ github.event.inputs.gitRef }}
+      path-to-config:
+         description: The path to sandbox pool config
+         type: "string"
+      dashboard-repo: 
+         description: Repo which contains the dashboard data
+         type: "string"       
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+      PACKAGE_INSTALLATION_KEYS:
+        description: "Package installation keys"
+
+
+
+jobs:
+
+  create-pool:
+    name: 'Create Pool'
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    timeout-minutes: 720 #Set to Maximum Time out
+    steps:
+
+      - uses: actions/checkout@v3
+        with: 
+         ref: ${{ inputs.git-ref }}
+         fetch-depth: 0
+
+
+      - name: Export Datadog Environment Variables
+        if: ${{ inputs.metrics-provider == 'datadog'}}
+        run: |
+          echo "SFPOWERSCRIPTS_DATADOG=true" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_HOST=${{ secrets.DATADOG_HOST }}" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_API_KEY=${{ secrets.DATADOG_API_KEY }}" >> $GITHUB_ENV
+
+   
+      - name: 'Authenticate Dev Hub'
+        run: |
+          echo "${{ secrets.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+          sfp org login  -f authfile -a devhub
+
+      # Authenticate to npm
+      - uses: actions/setup-node@v3
+        with:
+         registry-url: 'https://npm.pkg.github.com'
+
+      - name: 'Prepare a pool of scratch orgs'
+        run: |
+          if [ -z "${{ secrets.PACKAGE_INSTALLATION_KEYS }}" ]; then
+            sfp pool prepare -f ${{ inputs.path-to-config }} -v devhub
+          else
+            sfp pool prepare -f ${{ inputs.path-to-config }} -v devhub --keys ${{ secrets.PACKAGE_INSTALLATION_KEYS }}
+          fi
+        env:
+         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        
+      # Publish artifacts
+      - uses: actions/upload-artifact@v2
+        if: ${{ always() }}
+        with:
+          name: scratchorg-logs-pool-ci
+          path: .sfpowerscripts/prepare_logs

@@ -1,0 +1,37 @@
+name: "Create a CI Sandbox - Developer License"
+description: "Create a CI sandbox with developer license"
+
+inputs:
+  pathToPoolConfigFile:
+    description: "Path to pool config file"
+    required: true
+  devhub_sfdx_auth_url:
+    description: "Devhub SFDX Auth URL"
+    required: true
+  gh_token:
+    description: "Token for GitHub API"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - run: git config --global --add safe.directory $GITHUB_WORKSPACE
+      shell: bash
+
+    - run: |
+        echo "${{ inputs.devhub_sfdx_auth_url }}" > ./authfile
+        sfp org login -f authfile -a devhub
+      shell: bash
+
+    - id: createSandbox
+      run: |
+        export GH_TOKEN=${{inputs.gh_token}}
+        config=$(cat ${{ inputs.pathToPoolConfigFile }})
+
+        for entry in $(echo "$config" | jq -c '.[]'); do
+           echo 'Processing pool: ' $(echo $entry | jq -r '.pool')
+           $GITHUB_ACTION_PATH/process-sandbox-pool.sh  $GITHUB_ACTION_PATH  ${{ github.repository }} $entry &
+         done
+
+        wait # Wait for all background jobs to finish
+      shell: bash

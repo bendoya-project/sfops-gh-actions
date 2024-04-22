@@ -1,0 +1,17 @@
+{
+  "name": "findreleasedefn",
+  "version": "1.0.0",
+  "description": "",
+  "main": "findReleaseDefn.js",
+  "scripts": {
+    "build": "ncc build findReleaseDefn.js -o dist/findReleaseDefn"
+  },
+  "author": "flxbl-io",
+  "license": "BSL",
+  "dependencies": {
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "0.38.1"
+  }
+}

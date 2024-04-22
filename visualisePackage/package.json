@@ -1,0 +1,17 @@
+{
+  "name": "visualisepackage",
+  "version": "1.0.0",
+  "description": "A quick and dirty project to generate an animation showing the evolution of package in a Salesforce DX project.",
+  "main": "domainCreator.js",
+  "scripts": {
+    "build": "ncc build domainCreator.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.1"
+  }
+}

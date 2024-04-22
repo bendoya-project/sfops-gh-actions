@@ -1,0 +1,78 @@
+name: "Fetches a CI sandbox from pool"
+description: "Fetch a CI sandbox from the pool"
+inputs:
+  pool:
+    description: "Fetch a sandbox from the pool"
+    required: true
+  releaseName:
+    description: "Fetch a sandbox from the pool"
+    required: true
+  branch:
+    description: "The branch of the sandbox pool"
+    required: true
+  issue-number:
+     description: "The issue number where this sandbox will be used"
+     required: true
+  dashboard-repo:
+    description: "name of the repo to report to, will create a folder packageVersionReports in the target repo"
+    required: true
+  static_gh_token:
+    description: "GH_TOKEN that doesnt expire"
+    required: true
+  gh_token: # id of input
+    description: "github token to use for commiting to repo"
+    required: true
+outputs:
+  sbxname:
+    description: "Name of the sandbox"
+    value: ${{ steps.fetchSandbox.outputs.SANDBOX_NAME }}
+runs:
+  using: "composite"
+  steps:
+    # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+      shell: bash
+
+    - run: |
+        gh extension install heaths/gh-merge-json
+      shell: bash
+
+    - run: |
+        sbx_name=$(node $GITHUB_ACTION_PATH/checkSandbox.js  ${{github.repository}} ${{inputs.pool}}  ${{inputs.branch}} ${{ inputs.issue-number }} )
+        echo "INUSE_SANDBOX_NAME=$sbx_name" >> "$GITHUB_OUTPUT"
+      shell: bash
+      name: Check for In Use Sandbox
+      id: checkInUseSandbox
+
+    - name: Lock to get exclusive access to pool var
+      uses: bendoya-project/sfops-gh-actions/lockResource@main
+      if: steps.checkInUseSandbox.outputs.INUSE_SANDBOX_NAME == '' 
+      id: lockResource
+      with:
+        branch: pool-${{inputs.pool}} 
+        repo-token: ${{ inputs.gh_token }}
+
+    - run: |
+        sbx_name=$(node $GITHUB_ACTION_PATH/fetchSandbox.js  ${{github.repository}} ${{inputs.pool}}  ${{inputs.branch}} ${{ inputs.issue-number }} 20 )
+        echo "SANDBOX_NAME=$sbx_name" >> "$GITHUB_OUTPUT"
+      shell: bash
+      id: fetchSandbox
+
+    - name: Release locked access to pool vars
+      uses: bendoya-project/sfops-gh-actions/unlockResource@main
+      if: always() && steps.checkInUseSandbox.outputs.INUSE_SANDBOX_NAME == ''
+      with:
+        branch: pool-${{inputs.pool}} 
+        repo-token: ${{ inputs.static_gh_token }}
+        ticket_id: ${{ steps.lockResource.outputs.ticket_id }}
+
+      #Update sandbox status
+    - name: 'Update Sandbox status '
+      uses:  bendoya-project/sfops-gh-actions/sandboxStatusReporter@main
+      continue-on-error: true
+      with:
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+          gh_token:  ${{ inputs.gh_token }}

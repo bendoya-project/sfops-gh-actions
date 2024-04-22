@@ -1,0 +1,95 @@
+name: "sfops - Deploy from a PR Branch"
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        description: "The issue number where this sandbox will be used"
+        type: "string"
+      pathToReleaseConfigs:
+        description: "The path to the directory that has all release config"
+        type: "string"
+      additional-plugins:
+        description: "Additional plugins to be installed"
+        type: "string"
+      dashboard-repo:
+        description: "The repo to which the package version report is to be committed"
+        type: "string"
+      releasename:
+        description: "The name of the release to be prefixed"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      workitem-url:
+        description: "The url of the workitem"
+        type: "string"
+      workitem-filter:
+        description: "The filter to be applied to the workitem"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+jobs:
+  branch-deploy:
+     uses:  bendoya-project/sfops-gh-actions/.github/workflows/branch-deploy.yml@main
+     if: ${{  vars.SFOPS_BRANCH_DEPLOY == 'true'&& contains(github.base_ref,'release-') == false && ( github.event.issue.pull_request && ( startsWith(github.event.comment.body, 'sfops forcetest') ||  startsWith(github.event.comment.body, 'sfops test') || (startsWith(github.event.comment.body, 'sfops unlock')))) }}
+     with:
+      pathToReleaseConfigs: "config"
+      dashboard-repo: ${{ inputs.dashboard-repo }}
+      releasename: ${{ inputs.releasename }}
+      metrics-provider: ${{ inputs.metrics-provider }}
+      workitem-url: ${{ inputs.workitem-url }}
+      workitem-filter: ${{ inputs.workitem-filter }}
+      sfopsbot-app-id: ${{ inputs.sfopsbot-app-id }}
+      additional-plugins: ${{ inputs.additional-plugins }}
+     secrets:
+      DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+      SB_SFDX_AUTH_URL: ${{ secrets.SB_SFDX_AUTH_URL }}
+      DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+      DATADOG_HOST: ${{ secrets.DATADOG_HOST }}
+      SFOPSBOT_APP_PRIVATE_KEY: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+  renew-org:
+    name: "Renew Sandbox and retrigger validation"
+    uses: bendoya-project/sfops-gh-actions/.github/workflows/exec-renew-review-org.yml@main
+    if: ${{ github.event.issue.pull_request && startsWith(github.event.comment.body, 'sfops renew')  }}
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      sfopsbot-app-id: ${{ vars.SFOPSBOT_APP_ID }}
+    secrets:
+      DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+      DATADOG_HOST: ${{ secrets.DATADOG_HOST }}
+      SFOPSBOT_APP_PRIVATE_KEY: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+
+  extend-org:
+    name: "Extend review Sandbox"
+    uses: bendoya-project/sfops-gh-actions/.github/workflows/exec-extend-review-org.yml@main
+    if: ${{ github.event.issue.pull_request && startsWith(github.event.comment.body, 'sfops extend')  }}
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      sfopsbot-app-id: ${{ vars.SFOPSBOT_APP_ID }}
+    secrets:
+      DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+      DATADOG_HOST: ${{ secrets.DATADOG_HOST }}
+      SFOPSBOT_APP_PRIVATE_KEY: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}

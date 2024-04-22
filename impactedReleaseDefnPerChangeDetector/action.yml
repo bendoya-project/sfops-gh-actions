@@ -1,0 +1,20 @@
+name: "Figure out impacted release defns as per changes in branch"
+description: "Figures out impacted release defns as per files modified by PR"
+inputs:
+  pathToReleaseDefns:
+    description: "The path to the directory that contains release defns"
+    required: true
+  base-branch:
+    description: "The commit id from where changes should be analyzed"
+    required: true
+  feature-branch:
+    description: "The commit id to which changes should be analyzed"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        sfp impact:releaseconfig --basebranch=${{ inputs.base-branch }} --branch=${{ inputs.feature-branch }} --filterByChangesInBranch --explicitDependencyCheck --releaseconfig=${{ inputs.pathToReleaseDefns }} 
+      shell: bash
+      id: computeImpactedReleaseDefns

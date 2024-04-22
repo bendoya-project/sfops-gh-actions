@@ -1,0 +1,14 @@
+name: "Exclude Packages from Release Defn"
+description: "Exclude packages from release defn"
+inputs:
+  changelog:
+    description: "Path to the changelog file"
+    required: true
+  excludePackages:
+    description: "Exclude package version by providing a package name in a comma separated format"
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        node $GITHUB_ACTION_PATH/dist/index.js  "${{ inputs.changelog }}"  "${{ inputs.excludePackages }}"
+      shell: bash

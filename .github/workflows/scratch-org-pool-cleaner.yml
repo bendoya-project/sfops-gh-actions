@@ -1,0 +1,63 @@
+name: 'Clean Scratch Org Pools'
+
+on:
+  workflow_call:
+    inputs:
+      pool-name: 
+         description: Name of the scratch org pool
+         type: "string"   
+      drop-all-orgs: 
+         description: Whether to drop all scratch orgs in pool, or just the non assigned ones
+         type: "boolean"   
+      dashboard-repo: 
+         description: Repo which contains the dashboard data
+         type: "string"       
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+
+
+jobs:
+
+  clean-pool:
+    name: 'Clean Dev Pool'
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops:latest
+
+    steps:
+
+      - uses: actions/checkout@v3
+
+
+      - name: 'Authenticate Dev Hub'
+        run: |
+          echo "${{ secrets.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+          sfp org login  -f authfile -a devhub
+
+
+      - name: 'Drop the pool'
+        run: |
+          if [ ${{ inputs.drop-all-orgs}} == true ]; then
+            sfp pool delete -t  ${{ inputs.pool-name}} -v devhub -a
+          else
+            sfp pool delete -t  ${{ inputs.pool-name}} -v devhub
+          fi
+
+ 

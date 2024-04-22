@@ -1,0 +1,29 @@
+#always assume it needs sfp docker image as the run time
+
+name: "Commits a directory to another remote directory"
+description: "Report package version of an org to a folder in repo and create an html report"
+inputs:
+  source-dir:
+    description: "name of the directory to commit from"
+    required: true
+  target-dir:
+    description: "name of the directory to commit to"
+    required: true
+  commit-message:
+    description: "commit message"
+    required: true
+  dashboard-repo:
+    description: "name of the repo to report to, will create a folder packageVersionReports in the target repo"
+    required: true
+  gh_token:
+    description: "github token to use for commiting to repo"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        $GITHUB_ACTION_PATH/git-repo-commiter.sh ${{ inputs.dashboard-repo }} ${{inputs.source-dir }} ${{inputs.target-dir}} ${{inputs.commit-message}} 
+      shell: bash

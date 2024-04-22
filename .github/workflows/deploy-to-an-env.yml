@@ -1,0 +1,110 @@
+name: "Deploy to an env"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Name of the environment"
+        type: "string"
+      environment-profile:
+        description: "The profile of the enviroment to be used for operation"
+        type: "string"
+      org-name:
+        description: "The name of the sandbox if any for deployment"
+        type: "string"
+      additional-plugins:
+        description: "Additional plugins to be installed"
+        type: "string"
+      dashboard-repo:
+        description: "The repo to which the package version report is to be committed"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+jobs:
+  deploy-to-org:
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: build-artifacts
+          path: artifacts
+
+      - name: Export Datadog Environment Variables
+        if: ${{ inputs.metrics-provider == 'datadog'}}
+        run: |
+          echo "SFPOWERSCRIPTS_DATADOG=true" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_HOST=${{ secrets.DATADOG_HOST }}" >> $GITHUB_ENV
+          echo "SFPOWERSCRIPTS_DATADOG_API_KEY=${{ secrets.DATADOG_API_KEY }}" >> $GITHUB_ENV
+
+      - name: Lock enviroment
+        uses: ben-z/gh-action-mutex@v1.0-alpha-7
+        with:
+          repo-token: ${{ steps.app-token.outputs.token }}
+          branch: ${{ inputs.environment }}-mutex
+
+      - name: "Authenticate Dev Hub"
+        run: |
+          echo "${{ secrets.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+          sfp org login -f authfile -a devhub
+
+      - name: Authenticate to ${{ inputs.environment }}
+        id: handle-auth
+        uses: bendoya-project/sfops-gh-actions/authToEnvironment@main
+        with:
+          DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          SB_SFDX_AUTH_URL: ${{ secrets.SB_SFDX_AUTH_URL }}
+          environment: ${{ inputs.environment }}
+          org-name: ${{ vars.SBXNAME }}
+          environment-profile: ${{ inputs.environment-profile }}
+
+      - name: Install additional plugins if any
+        run: |
+          if [[ -n "${{ inputs.additional-plugins }}" ]]; then
+              IFS=',' read -ra plugins <<< "${{ inputs.additional-plugins }}"
+              for plugin in "${plugins[@]}"; do
+                  echo "Installing $plugin"
+                  echo 'y' | sfdx plugins:install $plugin
+              done
+          fi
+
+      - name: "Deploy to ${{ inputs.environment }}"
+        run: |
+         sfp install -u ${{ inputs.environment-profile }}   --skipifalreadyinstalled    -g "::group::,::endgroup::"
+
+      - name: "Run package version reporter"
+        uses: bendoya-project/sfops-gh-actions/packageversionReporter@main
+        with:
+          alias: ${{ inputs.environment-profile }}
+          env-name: ${{ inputs.environment }}
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+          gh_token: ${{ steps.app-token.outputs.token }}

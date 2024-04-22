@@ -1,0 +1,57 @@
+#always assume it needs sfp docker image as the run time
+
+name: "Report execution of run all local tests of an or go to a repo"
+description: "Report package version of an org to a folder in repo and create an html report"
+inputs:
+  alias: # id of input
+    description: "alias of the org"
+    required: true
+  dashboard-repo: # id of input
+    description: "name of the repo to report to, will create a folder apexTestResults in the target repo"
+    required: true
+  gh_token: # id of input
+    description: "github token to use for commiting to repo"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+
+        # add a var for tracking metrics
+        start=$(date +%s)
+
+        # ignore failure of this command
+        set +e
+        sf apex  run  test -o  ${{ inputs.alias }} -l RunLocalTests -w 300 -y -d testresults -r json 
+        set -e
+
+        # calculate elapsed time
+        end=$(date +%s)
+        elapsed=$(( end - start ))
+
+        # Find the file that ends with -junit.xml in the testresults directory
+        FILE=$(find ./testresults -type f -name '*-junit.xml')
+
+        if [ -z "$FILE" ]
+        then
+        echo "No file found ending with -junit.xml in testresults directory"
+        exit 1
+        fi
+
+        sfp metrics:report -m "testrun.elapsedtime" -t timer -v $elapsed -g {\"env\":\"${{inputs.alias}}\"}
+
+        # Run the Node.js script with the file path as an argument
+        node $GITHUB_ACTION_PATH/dist/index.js "$FILE"  ${{inputs.alias}}
+
+        find ./testresults -type f ! -name '*.html' -delete
+
+      shell: bash
+
+    # Set up GH_TOKEN on the environment as secret doesnt seem to pass onto other action
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        export GH_TOKEN=${{inputs.gh_token}}
+        echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
+      shell: bash
+

@@ -1,0 +1,115 @@
+name: IssueOps - Test Deletion of Component
+
+on:
+  workflow_call:
+    inputs:
+      issue-title: 
+        description: "The title of the issue"
+        type: "string"
+      issue-body: 
+         description: "The body of the issue"
+         type: "string"
+      issue-number:
+         description: "The number of the issue"
+         type: "string"
+      dashboard-repo:
+        description: "Target repo to submit package version report as HTML"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"  
+
+
+
+
+jobs:
+  issue-analyzer:
+    if: contains(github.event.issue.title, 'Ops - Test Deletion of a component')
+    runs-on: ubuntu-latest
+    outputs:
+      components: ${{ steps.issue-analyzer-output.outputs.components }}
+      targetorg: ${{ steps.issue-analyzer-output.outputs.targetorg }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+           app-id: ${{ inputs.sfopsbot-app-id }}
+           private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+           owner: ${{ github.repository_owner }}
+  
+    
+      - uses: stefanbuck/github-issue-parser@v3
+        id: issue-parser
+        with:
+          template-path: .github/ISSUE_TEMPLATE/request-component-deletion-test.yml
+
+      - uses: actions/github-script@v6
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: [ "ops" ,"ops-test-deletion-of-component"]
+            })
+
+      - name: Create Comment before intiating installation
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{github.event.issue.number}}
+          token: ${{ steps.app-token.outputs.token }}
+          body: |
+            Hello @${{ github.event.issue.user.login }} :wave:
+            
+            Your request has been received and is being processed. 
+            We will attempt to delete the component(s) in the target org using an unlocked package :), 
+            and will update this issue with the results.
+
+            Please make sure to remove the component from the repository after the deletion is successful.
+
+            Please proceed to do this activity on other orgs after you have verified the results of this activity.
+            You can follow the action at this link: https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}
+
+            This issue is being processed by [sfops 🤖]          
+
+      - name: Set Output
+        id: issue-analyzer-output
+        run: |
+            echo "components=${{ steps.issue-parser.outputs.issueparser_components }}" >> "$GITHUB_OUTPUT"
+            echo "targetorg=${{ steps.issue-parser.outputs.issueparser_targetorg }}" >> "$GITHUB_OUTPUT"
+          
+           
+
+
+  execute_action:
+    needs: issue-analyzer
+    uses:  bendoya-project/sfops-gh-actions/.github/workflows/delete-component-job.yml@main
+    with:
+       components: ${{ needs.issue-analyzer.outputs.components }}
+       sbxname: ${{ needs.issue-analyzer.outputs.targetorg }}
+    secrets:
+       DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}  
+      

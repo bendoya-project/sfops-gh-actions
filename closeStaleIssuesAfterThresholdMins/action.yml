@@ -1,0 +1,37 @@
+name: 'Close Stale Issues'
+description: 'Closes issues based on a specified timeout period'
+inputs:
+  gh_token:
+    description: "Token for GitHub API"
+    required: true
+  label:
+    description: 'Label to filter issues'
+    required: false
+    default: 'ops-elevated-privileges'
+  defaultThreshold:
+    description: 'Default number to close the issue'
+    required: false
+    default: '30'
+  units:
+    description: 'Default number to close the issue'
+    required: false
+    default: 'mins'
+  parseString:
+    description: 'String to look for in issue body for parsing'
+    required: true
+
+
+runs:
+  using: "composite"
+  steps:
+
+    - id: closeStaleIssues
+      run: |
+        node $GITHUB_ACTION_PATH/dist/index.js --token ${{ inputs.gh_token }} \
+                        --owner ${{ github.repository_owner }}  \
+                        --repo ${{ github.event.repository.name }}  \
+                        --label ${{ inputs.label }} \
+                        --default ${{ inputs.defaultThreshold }} \
+                        --unit ${{ inputs.units }} \
+                        --parseString "${{ inputs.parseString }}"
+      shell: bash

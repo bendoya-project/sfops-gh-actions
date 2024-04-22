@@ -1,0 +1,106 @@
+name: 'IssueOps - Create-an-env'
+
+on:
+  workflow_call:
+    inputs:
+      issue-title: 
+        description: "The title of the issue"
+        type: "string"
+      issue-body: 
+         description: "The body of the issue"
+         type: "string"
+      issue-number:
+         description: "The number of the issue"
+         type: "string"
+      dashboard-repo:
+        description: "Target repo to submit package version report as HTML"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+
+jobs: 
+  execute_action:
+    runs-on: ubuntu-latest
+    name: 'Create a environment'
+    if: contains(  inputs.issue-title , 'Ops - Request a new environment')
+    steps:
+
+
+     # gh needs a repo bummer
+      - uses: actions/checkout@v3
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: "Get installation token for sfopsbot"
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+
+      - uses: stefanbuck/github-issue-parser@v3
+        id: issue-parser
+        with:
+          template-path: .github/ISSUE_TEMPLATE/request-an-env.yml      
+
+      - uses: actions/github-script@v6
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: ${{ inputs.issue-number }},
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: [ "ops", "ops-request-an-env"]
+            })
+
+
+      - name: Create Comment before initiating action
+        uses: peter-evans/create-or-update-comment@v3
+        with:
+          issue-number: ${{ inputs.issue-number }}
+          token: ${{ steps.app-token.outputs.token }}
+          body: |
+            Hello @${{ github.event.issue.user.login }} :wave:
+            
+            Your request has been received and is being processed.  A new environment with ${{ steps.issue-parser.outputs.issueparser_type  }} type 
+            and ${{ steps.issue-parser.outputs.issueparser_name }} name will be created shortly.  
+            
+            The job run can be tracked at the link at https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}
+
+            [1]: This issue is being processed by [sfops 🤖]
+
+
+      - name: Create environments
+        uses: thijsvtol/create-environments@main
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repo: ${{ github.repository }}
+          environments: ${{ steps.issue-parser.outputs.issueparser_name }}
+          required_reviewers:  ${{ steps.issue-parser.outputs.issueparser_envApprover }}
+
+      - name: Setup Environment Variables
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh variable set  BRANCH  -e ${{ steps.issue-parser.outputs.issueparser_name }}  --repo  ${{ github.repository }} -b ${{ steps.issue-parser.outputs.issueparser_branch }}
+          gh variable set  TYPE  -e ${{ steps.issue-parser.outputs.issueparser_name }}  --repo  ${{ github.repository }} -b  ${{ steps.issue-parser.outputs.issueparser_type}}
+          gh variable set  SBX_NAME  -e ${{ steps.issue-parser.outputs.issueparser_name }}  --repo  ${{ github.repository }} -b ${{ steps.issue-parser.outputs.issueparser_name }} 

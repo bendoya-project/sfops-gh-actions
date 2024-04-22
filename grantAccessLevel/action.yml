@@ -1,0 +1,45 @@
+name: "Grant an access level to a developer"
+description: "Grant an access level to a developer for a specific environment"
+
+inputs:
+  devhub_sfdx_auth_url:
+    description: "Devhub SFDX Auth URL"
+    required: true
+  gh_token:
+    description: "Token for GitHub API"
+    required: true
+  username:
+    description: "Username of the user to be granted access"
+    required: true
+  configFile:
+    description: "Config file to be used for granting access"
+    required: true
+    default: "config/devconfig.yaml"
+  accessLevel:
+    description: "Access level to be granted"
+    required: true
+  switchToDefault:
+    description: "Switch to default access level"
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    
+    - run: git config --global --add safe.directory $GITHUB_WORKSPACE
+      shell: bash
+
+    - run: |
+        echo "${{ inputs.devhub_sfdx_auth_url }}" > ./authfile
+        sfp org login -f authfile -a devhub
+      shell: bash
+
+    - run: |
+        if [ -n "${{ inputs.switchToDefault }}" ]; then
+            sfp dev grant --dev ${{ inputs.username }} -f ${{ inputs.configFile }} -o devhub --useDefault
+        else
+            sfp dev grant --dev ${{ inputs.username }} -f ${{ inputs.configFile }} -o devhub -a ${{ inputs.accessLevel }} 
+        fi
+      shell: bash
+
+   

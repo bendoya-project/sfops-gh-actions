@@ -1,0 +1,166 @@
+# Executes dry run of a release on an environment
+# This creates a comment with the workitems and the commit log
+# Reusable job not to be used directly
+
+name: "Trigger Release to an org"
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Name of the environment"
+        type: "string"
+      sbxname:
+        description: "The name of the org to be released"
+        type: "string"
+      domain:
+        description: "Domain  that need to be released"
+        required: true
+        type: "string"
+      branchname:
+        description: "Name of the branch where the release defn is stored in the repo"
+        required: true
+        type: "string"
+      releaselogbranch:
+        description: "Name of the branch where the release logs are stored in the repo"
+        type: "string"
+      releaseDefn:
+        description: "The release definition to use"
+        required: true
+        type: "string"
+      overrideSkipIfAlreadyInstalled:
+        description: "Override skipIfAlreadyInstalled flag in the release defintion"
+        type: "string"
+      excludePackages:
+        description: "Exclude packages from the release"
+        type: "string"
+      overridePackageVersions:
+        description: "Override package version in the release"
+        type: "string"
+      issue-number:
+        description: "If this action is triggered from an issue, the issue number"
+        type: "string"
+      issue-author:
+        description: "The initiator of the issue"
+        type: "string"
+      workitem-url:
+        description: "Workitem URL to be used in the changelog"
+        type: "string"
+      issue-notifier:
+        description: "Who all need to be need to be notified"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      ENV_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+jobs:
+  pre-release-to-org:
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops:latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          registry-url: "https://npm.pkg.github.com"
+
+      - name: Fetch Environment Variables
+        id: fetch-env-vars
+        uses: raven-actions/environment-variables@v1
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          environment: ${{ inputs.environment }}
+
+      - name: Authenticate to ${{ inputs.environment }}
+        id: handle-auth
+        uses: bendoya-project/sfops-gh-actions/authToEnvironment@main
+        with:
+          DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          ENV_SFDX_AUTH_URL: ${{ secrets.ENV_SFDX_AUTH_URL }}
+          environment: ${{ inputs.environment }}
+          org-name: ${{ steps.fetch-env-vars.outputs.SBXNAME }}
+          environment-profile: ${{ inputs.environment }}
+
+      - name: Fetch Release Defn
+        id: fetch-release-defn
+        uses:  bendoya-project/sfops-gh-actions/findReleaseDefn@main
+        with: 
+          releaseDefn: ${{ inputs.releaseDefn }}
+          domain: ${{ inputs.domain }}
+          branch: ${{ inputs.branchname }}
+           
+
+
+      - name: "Exclude Packages if  any"
+        uses: bendoya-project/sfops-gh-actions/excludePackagesInReleaseDefns@main
+        with:
+          changelog:   ${{steps.fetch-release-defn.outputs.releaseDefn}}
+          excludePackages: ${{ inputs.excludePackages }}
+
+      - name: "Run Override package version if any"
+        uses: bendoya-project/sfops-gh-actions/overridePackageVersionInReleaseDefns@main
+        with:
+          changelog:  ${{steps.fetch-release-defn.outputs.releaseDefn}}
+          overridePackageVersions: ${{ inputs.overridePackageVersions }}
+
+      # Release to environment
+      - name: Do a Dry Run
+        id: release
+        run: |
+           sfp release --dryrun -u ${{steps.handle-auth.outputs.alias}} -p "${{steps.fetch-release-defn.outputs.releaseDefn}}" --npm --scope ${{ github.repository_owner }} --generatechangelog --branchname ${{inputs.releaselogbranch}}-${{steps.handle-auth.outputs.alias}}  -v prod -g "::group::,::endgroup::"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create Message Body as File
+        id: message_template
+        run: |
+          echo "Hello @${{ inputs.issue-author }} , " > message.md
+          echo " " >> message.md
+          echo "Please find the contents of release defintion after applying any transformations to ${{steps.handle-auth.outputs.alias}}" >> message.md
+          echo "If this is all good, you may proceed to request approvals or approve the deployment to this environment"
+          echo " " >> message.md
+          if [ -f .sfpowerscripts/outputs/deployment-breakdown.md ]; then
+            cat .sfpowerscripts/outputs/deployment-breakdown.md >> message.md
+          else
+            echo "Unable to figure out deployment breakdown, contact support! " >> message.md
+          fi
+          if [ -f .sfpowerscripts/outputs/release-changelog.md ]; then
+            cat .sfpowerscripts/outputs/release-changelog.md  >> message.md
+          else
+            echo "Unable to figure out work items in this release, if you think this is incorrect, contact sfops support from sfops dev central! " >> message.md
+          fi
+
+          cat message.md
+
+      - uses: mshick/add-pr-comment@v2
+        name: Print contents of  release defn
+        with:
+          issue: ${{inputs.issue-number}}
+          allow-repeats: false
+          repo-token: ${{ steps.app-token.outputs.token }}
+          message-id: ${{ inputs.environment }}
+          refresh-message-position: true
+          message-path: |
+            message.md

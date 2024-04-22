@@ -1,0 +1,106 @@
+# Reusable job not to be used directly
+
+name: 'Install an unlocked/managed package to target org'
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Name of the environment'
+        required: true
+        type: 'string'
+      packages:
+        description: 'Alias and  ID of the package version to install'
+        required: true
+        type: 'string'
+      installation-keys:
+        description: 'Installation keys if any for the packages'
+        type: 'string'    
+      forceInstall:
+        description: 'Force Install the package?'
+        type: 'string'
+      reportPackageVersion:
+          description: 'Create Html Report of package version from this org along with other orgs'
+          type: 'boolean'
+          default: false
+      dashboard-repo:
+          description: 'Target repo to submit package version report as HTML'
+          type: 'string'
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets: 
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"  
+      
+            
+
+jobs:
+  install-unlocked:
+    name: Install second generation package
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+            node-version: "18" 
+
+
+      - name: Authenticate to DevHub
+        run: |
+          echo "${{ secrets.DEVHUB_SFDX_AUTH_URL }}" > ./authfile
+          sfp org login -f authfile -a devhub
+
+
+      - name: Authenticate to ${{ inputs.environment }}
+        id: handle-auth
+        uses: bendoya-project/sfops-gh-actions/authToEnvironment@main
+        with: 
+          DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+          SB_SFDX_AUTH_URL: ${{ secrets.SB_SFDX_AUTH_URL }}
+          environment: ${{ inputs.environment }}
+          org-name: ${{ inputs.environment }}
+          environment-profile:  ${{ inputs.environment }}
+
+
+      - name: Install Unlocked Package
+        uses: bendoya-project/sfops-gh-actions/secondGenPackageInstaller@main
+        with:
+            target-org: ${{steps.handle-auth.outputs.alias}}
+            devhub: devhub
+            packages: '${{ inputs.packages }}'
+            installation-keys: ${{ inputs.installation-keys }}
+            force-install: ${{ inputs.forceInstall }}
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+            
+      - name: 'Run package version reporter'
+        uses: bendoya-project/sfops-gh-actions/packageversionReporter@main
+        if: ${{ inputs.reportPackageVersion == 'true' }}
+        with:
+         alias: ${{ inputs.environment }}
+         env-name: ${{ inputs.environment }}
+         dashboard-repo: ${{inputs.dashboard-repo}}
+         gh_token: ${{ steps.app-token.outputs.token }}
+
+  

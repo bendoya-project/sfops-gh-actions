@@ -1,0 +1,195 @@
+name: "Build a domain"
+
+on:
+  workflow_call:
+    inputs:
+      releaseconfig:
+        description: "The path to the release config file"
+        type: "string"
+      pathToReleaseConfigs:
+        description: "The path to the directory that has all release config"
+        type: "string"
+      domain:
+        description: "The name of the domain to be built"
+        type: "string"
+      branchname:
+        description: "The name of the branch where the build is triggrered"
+        type: "string"
+      additional-plugins:
+        description: "Additional plugins to be installed"
+        type: "string"
+      dashboard-repo:
+        description: "The repo to which the package version report is to be committed"
+        type: "string"
+      releasename:
+        description: "The name of the release"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      workitem-url:
+        description: "The url of the workitem"
+        type: "string"
+      workitem-filter:
+        description: "The filter to be applied to the workitem"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+
+jobs:
+ 
+  publish:
+    name: "publish"
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops-lite:latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.NPM_TOKEN }}
+
+      - uses: actions/download-artifact@v3
+        id: download_artifacts
+        continue-on-error: true
+        with:
+          name: build-artifacts-${{inputs.domain}}
+          path: artifacts
+
+      # Authenticate to npm
+      - uses: actions/setup-node@v3
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        with:
+          registry-url: "https://npm.pkg.github.com"
+
+      - name: "Fetch all ReleaseNames"
+        id: getAllReleaseNames
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        uses: bendoya-project/sfops-gh-actions/fetchAllReleaseNames@main
+        with:
+          pathToReleaseConfigs: ${{ inputs.pathToReleaseConfigs}}
+
+      - name: Compute Release Name
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        run: |
+          BRANCH_NAME=${{ github.ref_name }}
+          if [[ $BRANCH_NAME == release* ]]; then
+            RELEASE_NAME="hotfix-${{ inputs.releasename }}-$(date +'%d-%m')-${{ github.run_id }}"
+          else
+            RELEASE_NAME="${{ inputs.releasename }}-$(date +'%d-%m')-${{ github.run_id }}"
+          fi
+          echo "RELEASE_NAME=${RELEASE_NAME}" >> $GITHUB_ENV
+          echo "allDomains={{steps.getAllReleaseNames.outputs.releaseNames}}" >> $GITHUB_ENV
+
+      - name: Publish
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        run: |
+          sfp publish -d artifacts --npm --scope @${{ github.repository_owner }}  --gittag --pushgittag
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Generate release defn
+        if: ${{ !cancelled() && steps.download_artifacts.outcome == 'success' }}
+        run: |
+          sfp releasedefinition:generate -b releasedefns  -c  HEAD  -d ${{inputs.branchname}}/${{inputs.domain}} -f  ${{inputs.releaseconfig}} -n ${{env.RELEASE_NAME}}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN}}
+          GH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+
+      - name: Generate changelog
+        if: ${{ !cancelled() && steps.download_artifacts.outcome == 'success' }}
+        run: |
+          rm -rf artifacts
+          git config --global --add safe.directory '*'
+          git fetch --all
+          # do a fetch again for accuracy
+          git show origin/releasedefns:${{inputs.branchname}}/${{ inputs.domain }}/${{env.RELEASE_NAME}}.yml > releasedefn.yml
+          sfp artifacts:fetch -p releasedefn.yml -d artifacts --npm --scope ${{ github.repository_owner }}
+          sfp changelog:generate -b releasedefns  -d artifacts -w "${{inputs.workitem-filter}}"  --workitemurl "${{inputs.workitem-url}}" -n ${{env.RELEASE_NAME}} --directory ${{inputs.branchname}}/${{inputs.domain}}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN}}
+          GH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: "Get installation token for sfopsbot"
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+      - name: "Report changelog"
+        uses: bendoya-project/sfops-gh-actions/changelogReporter@main
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        with:
+          source-branch: releasedefns
+          pathToReleaseConfigs: ${{ inputs.pathToReleaseConfigs }}
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+          branch: ${{ github.ref_name }}
+          domain: ${{inputs.domain}}
+          gh_token: ${{ steps.app-token.outputs.token }}
+          source-repo-url: https://github.com/${{github.repository}}
+          workitem-url: ${{inputs.workitem-url}}
+
+      - name: "Cherry pick the commit and create PR"
+        uses: bendoya-project/sfops-gh-actions/cherrypickAndCreatePR@main
+        continue-on-error: true
+        if: contains(github.ref,'release') || github.ref == 'refs/heads/release/**'
+        with:
+          git-user-email: sfopsbot@flxbl.io
+          git-user-name: build-bot
+          gh_token: ${{ steps.app-token.outputs.token }}
+          target-branch: "main"
+
+      - uses: mshick/add-pr-comment@v2
+        name: Report Comment on originating PR
+        if: ${{ steps.download_artifacts.outcome == 'success'}}
+        with:
+          allow-repeats: false
+          message-id: ${{inputs.domain}}
+          refresh-message-position: true
+          repo-token: ${{ steps.app-token.outputs.token }}
+          message: |
+            This work item  is now published in the following release defn  ${{env.RELEASE_NAME}} .
+            The link is available at https://${{ github.repository_owner}}.github.io/${{inputs.dashboard-repo}}/changelog/changelog-${{inputs.domain}}.html#${{env.RELEASE_NAME}}
+
+  comment_issue_on_error:
+    runs-on: ubuntu-latest
+    needs: publish
+    if: always() && ( needs.publish.result == 'failure' || needs.publish.result == 'cancelled' || needs.publish.result == 'skipped')
+    steps:
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: "Get installation token for sfopsbot"
+        with:
+         app-id: ${{ inputs.sfopsbot-app-id }}
+         private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+         owner: ${{ github.repository_owner }}
+
+      - uses: mshick/add-pr-comment@v2
+        with:
+          allow-repeats: false
+          message-id: ${{inputs.domain}}
+          refresh-message-position: true
+          repo-token: ${{ steps.app-token.outputs.token }}
+          message: |
+            Apologies, it seems we ran into an issue, This would need your manual attention please check the job run
+            at the link https://github.com/${{github.repository}}/actions/runs/${{github.run_id}}

@@ -1,0 +1,221 @@
+name: "Push to Branch - Deploy after merge"
+
+on:
+  workflow_call:
+    inputs:
+      releaseconfig:
+        description: "The path to the release config file"
+        type: "string"
+      pathToReleaseConfigs:
+        description: "The path to the directory that has all release config"
+        type: "string"
+      branchname:
+        description: "The name of the branch where the build is triggrered"
+        type: "string"
+      additional-plugins:
+        description: "Additional plugins to be installed"
+        type: "string"
+      dashboard-repo:
+        description: "The repo to which the package version report is to be committed"
+        type: "string"
+      releasename:
+        description: "The name of the release"
+        type: "string"
+      metrics-provider:
+        description: "The metrics provider to be used"
+        type: "string"
+      workitem-url:
+        description: "The url of the workitem"
+        type: "string"
+      workitem-filter:
+        description: "The filter to be applied to the workitem"
+        type: "string"
+      sfopsbot-app-id: 
+         description: The App id of the bot used for this workflow_call
+         type: "string"
+    secrets:
+      NPM_TOKEN:
+        description: "GH TOKEN to publish to NPM"
+      DEVHUB_SFDX_AUTH_URL:
+        description: "Devhub Auth URL"
+      SB_SFDX_AUTH_URL:
+        description: "Sandbox Auth URL"
+      DATADOG_API_KEY:
+        description: "Datadog api key to report metrics"
+      DATADOG_HOST:
+        description: "Datadog host to report metrics"
+      SFOPSBOT_APP_PRIVATE_KEY:
+        description: "Private key of the bot app used"
+
+jobs:
+  analyze:
+    name: 'Analyze Impacted Domains'
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops:latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+  
+      - name: Figure out the last tagged commit id
+        id: commit-finder
+        run: |
+
+            git config --global --add safe.directory $GITHUB_WORKSPACE
+            last_tag=$(git describe --tags --match '*_v*' --abbrev=0 2>/dev/null || true)
+
+            if [ -z "$last_tag" ]; then
+              echo "No tags found."
+              echo "last_tagged_commit=$(git rev-list --max-parents=0 HEAD)" >> $GITHUB_OUTPUT
+            else
+              echo "Tag found: $last_tag"
+              echo "last_tagged_commit=$(git rev-parse $last_tag)" >> $GITHUB_OUTPUT
+            fi
+        
+
+      - name: 'Figure Impacted Release Defns'
+        uses: bendoya-project/sfops-gh-actions/impactedReleaseDefnDetector@main
+        with:
+         pathToReleaseDefns: 'config'
+         from-commit: ${{ steps.commit-finder.outputs.last_tagged_commit }}
+         to-commit: HEAD
+         
+      - name: Set matrix data
+        id: set-matrix
+        run: |
+           echo "matrix=$(jq -c . < ./impacted-release-configs.json)" >> $GITHUB_OUTPUT
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: "Get installation token for sfopsbot"
+        with:
+          app-id: ${{ inputs.sfopsbot-app-id }}
+          private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - uses: jwalton/gh-find-current-pr@v1
+        id: find-pr-number
+        name: find-pr-number
+        with:
+            state: closed
+            github-token: ${{steps.app-token.outputs.token}}
+            
+
+      - uses: bendoya-project/sfops-gh-actions/branchDeploymentReporter@main
+        name: Report Branch Deployments
+        id: report
+        if: ${{ steps.set-matrix.outputs.matrix != '[]' && steps.set-matrix.outputs.matrix != '' && github.event_name == 'push' }}
+        continue-on-error : true
+        with:
+         status: 'build'
+         dashboard-repo:  ${{ vars.SFOPS_DASHBOARD_REPO }}
+         gh_token: ${{steps.app-token.outputs.token}}
+         issue-number: ${{ steps.find-pr-number.outputs.pr }}
+  
+  build-test-publish:
+    name: 'Build , Test &  Publish ${{ matrix.releaseName }}'
+    needs: 
+      - analyze
+    if: ${{ needs.analyze.outputs.matrix != '[]' && needs.analyze.outputs.matrix != '' }}
+    strategy:
+      matrix: ${{ fromJson(needs.analyze.outputs.matrix) }}
+      fail-fast: true
+      max-parallel: 1
+    uses:   bendoya-project/sfops-gh-actions/.github/workflows/build-test-publish-domain.yml@main
+    with:
+       releaseconfig: ${{ matrix.filePath }}
+       domain: ${{ matrix.releaseName }}
+       branchname: ${{ github.ref_name }}
+       pathToReleaseConfigs: ${{ inputs.pathToReleaseConfigs }}
+       dashboard-repo: ${{ inputs.dashboard-repo }}
+       releasename: ${{ inputs.releaseName }}
+       metrics-provider:  ${{ inputs.metrics-provider }}
+       workitem-url: ${{ inputs.workitem-url }}
+       workitem-filter:  ${{ inputs.workitem-filter }}
+       sfopsbot-app-id: ${{ inputs.sfopsbot-app-id}}
+       additional-plugins: ${{ inputs.additional-plugins }}
+    secrets:
+      DEVHUB_SFDX_AUTH_URL: ${{ secrets.DEVHUB_SFDX_AUTH_URL }}
+      SB_SFDX_AUTH_URL: ${{ secrets.SB_SFDX_AUTH_URL }}
+      DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+      DATADOG_HOST: ${{ secrets.DATADOG_HOST }}
+      SFOPSBOT_APP_PRIVATE_KEY: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  report-merge-status:
+    name: "Report merge status"
+    runs-on: ubuntu-latest
+    container: ghcr.io/flxbl-io/sfops:latest
+    needs:  build-test-publish
+    if: github.event_name == 'push'
+
+    steps:      
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        name: "Get installation token for sfopsbot"
+        with:
+          app-id: ${{ inputs.sfopsbot-app-id }}
+          private-key: ${{ secrets.SFOPSBOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+
+      - uses: bendoya-project/sfops-gh-actions/workflowExecutionTime@main
+        name: Report Workflow Execution Time
+        id: workflow
+        continue-on-error: true
+        with:
+          name: 'build'
+          gh_token: ${{steps.app-token.outputs.token}}
+          metrics-provider: ${{ vars.SFOPS_METRICS_PROVIDER }}
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DATADOG_HOST: ${{ secrets.DATADOG_HOST }}
+
+      - uses: jwalton/gh-find-current-pr@v1
+        id: find-pr-number
+        name: find-pr-number
+        with:
+            state: closed
+            github-token: ${{steps.app-token.outputs.token}}
+
+
+      - name: Remove current assignment
+        uses:  bendoya-project/sfops-gh-actions/removeAssignmentCISandbox@main
+        if: ${{ vars.SFOPS_RETURN_REVIEW_BACK_TO_POOL == 'true'}}
+        continue-on-error: true
+        with:
+         issue-number: ${{ steps.find-pr-number.outputs.pr }}
+         gh_token:  ${{ steps.app-token.outputs.token }}
+         return-back-to-pool: 'true'
+
+      #Update sandbox status
+      - name: 'Update Sandbox status '
+        uses:  bendoya-project/sfops-gh-actions/sandboxStatusReporter@main
+        continue-on-error: true
+        with:
+          dashboard-repo: ${{ inputs.dashboard-repo }}
+          gh_token:  ${{steps.app-token.outputs.token}}
+
+
+      - uses: bendoya-project/sfops-gh-actions/branchDeploymentReporter@main
+        name: Report Branch Deployments
+        id: report
+        continue-on-error : true
+        with:
+         status: 'ready'
+         dashboard-repo:  ${{ inputs.dashboard-repo }}
+         gh_token: ${{steps.app-token.outputs.token}}
+         issue-number: ${{ steps.find-pr-number.outputs.pr }}
+
+
+  
+
+
+

@@ -1,0 +1,47 @@
+name: "ReleaseToOrgMapReporter"
+description: "Report releases in each org"
+inputs:
+  source-branch:
+    description: "name of the branch from which to read changelog.json"
+    required: true
+  environments:
+    description: "list of environments of the changelog, separated by commas"
+    required: true
+  domain:
+    description: "domain for this particular changelog"
+    required: true
+  dashboard-repo:
+    description: "name of the repo to report to, will create a folder packageVersionReports in the target repo"
+    required: true
+  workitem-url:
+    description: "url of the jira board"
+    required: true
+  source-repo-url:
+    description: "url of the source repo"
+    required: true
+  gh_token:
+    description: "github token to use for committing to repo"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        git config --global --add safe.directory $GITHUB_WORKSPACE
+        git fetch --all
+
+        export GH_TOKEN=${{inputs.gh_token}}
+        node $GITHUB_ACTION_PATH/releaseLogsCopier.js ${{inputs.source-branch}} "${{inputs.environments}}"  "${{inputs.domain}}" 
+      shell: bash
+
+    - name: "Push changes to dashboard-repo"
+      id: updateGitRepo
+      uses: bendoya-project/sfops-gh-actions/updateGitRepo@main
+      with:
+        target-repo: ${{ inputs.dashboard-repo }}
+        source-dir: _data
+        target-dir: _data
+        commit-message: "Updated release logs for ${{inputs.domain}}"
+        update-release-names: false
+        gh_token: ${{ inputs.gh_token }}
+

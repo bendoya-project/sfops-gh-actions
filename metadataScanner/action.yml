@@ -1,0 +1,27 @@
+name: "Scan metadata"
+description: "Override packages from release defn"
+inputs:
+  gh_token:
+    description: "Token for GitHub API"
+    required: true
+  issue-number:
+    description: "Issue Number where it should be reported"
+    required: true
+runs:
+  using: "composite"
+  steps:
+
+      - run: |
+          export SF_DISABLE_LOG_FILE=true
+          node $GITHUB_ACTION_PATH/dist/index.js
+        shell: bash
+
+      - uses: mshick/add-pr-comment@v2
+        with:
+          allow-repeats: false
+          message-id: scan-metadata
+          refresh-message-position: false
+          repo-token: ${{ inputs.gh_token }}
+          message-path: metadata-report.md
+          issue: ${{ inputs.issue-number }}
+          

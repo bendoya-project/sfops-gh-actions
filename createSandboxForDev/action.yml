@@ -1,0 +1,126 @@
+name: "Create a Sandbox - Developer License"
+description: "Create a sandbox with developer license"
+
+inputs:
+  issue-number:
+    description: "Issue Number which triggered creation of this request"
+    required: true
+  email:
+    description: "Email of the user for which the sandbox is to be created"
+    required: true
+  daysToKeep:
+    description: "Amount of days the sandbox should be kept for"
+    required: true
+  sourceSB:
+    description: "Pick a source sandbox for the source of this sandbox"
+    required: true
+  devhub_sfdx_auth_url:
+    description: "Devhub SFDX Auth URL"
+    required: true
+  usersToBeActivated:
+    description: "Comma separated list of users to be activated"
+    required: false
+  deactivateUsers:
+    description: "Deactivate users"
+    required: false
+  apexClassId:
+    description: "Apex Class Id to be used for apex test execution"
+    required: false
+  gh_token:
+    description: "Token for GitHub API"
+    required: true
+  metrics-provider:
+    description: "The metrics provider to be used"
+  datadog-api-key:
+    description: "Datadog api key to report metrics"
+  datadog-host:
+    description: "Datadog host to report metrics"
+
+outputs:
+  SANDBOX_NAME:
+    description: "Name of the sandbox created"
+    value: ${{ steps.createSandbox.outputs.SANDBOX_NAME }}
+  SANDBOX_USERNAME:
+    description: "Name of the sandbox created"
+    value: ${{ steps.createSandbox.outputs.SANDBOX_USERNAME }}
+
+runs:
+  using: "composite"
+  steps:
+    - run: git config --global --add safe.directory $GITHUB_WORKSPACE
+      shell: bash
+
+    - run: |
+        echo "${{ inputs.devhub_sfdx_auth_url }}" > ./authfile
+        sfp org login -f authfile -a devhub
+      shell: bash
+
+    - id: createSandbox
+      run: |
+        # Fetch username
+        export GH_TOKEN=${{inputs.gh_token}}
+        devhubInfo=$(sf org display -o devhub --json)
+
+        # Use jq to extract the username
+        DEVHUB_USERNAME=$(echo $devhubInfo | jq -r '.result.username')
+
+
+        # add a var for tracking metrics
+        start=$(date +%s)
+        # Get 4 digits from email        
+        email=${{ inputs.email }}
+
+        # Extract everything before the '@'
+        email_before_at=${email%@*}
+
+        # Remove all dots from the extracted part
+        email_before_at=${email_before_at//./}
+
+        # Check if the length of email_before_at is less than 4
+        if [ ${#email_before_at} -lt 4 ]; then
+            # Calculate how many digits to add to make it 4 characters long
+            num_digits_to_add=$((4 - ${#email_before_at}))
+
+            # Generate a random number with the required number of digits
+            random_number=$(printf "%0${num_digits_to_add}d" $((RANDOM % (10**num_digits_to_add))))
+
+            # Append the random number to email_before_at
+            email_before_at="${email_before_at}${random_number}"
+        fi
+
+        # Concatenate the modified part with the '@' and the rest of the email
+        email="${email_before_at}@${email#*@}"
+
+        case "$email" in
+          ?*@?*.*) 
+            user_part="${email%%@*}"
+            trimmed_user="${user_part%"${user_part#????}"}"
+            echo "The trimmed user part of the email is: $trimmed_user";;
+          *) 
+            echo "This is not a valid email address.";;
+        esac
+
+        sandbox_appender_name=$(dd bs=512 if=/dev/urandom count=1 2>/dev/null | LC_ALL=C tr -dc '0-9' | head -c 6)
+        sandbox_name="$trimmed_user$sandbox_appender_name"
+
+
+        echo Name of the sandbox to be created : $sandbox_name
+
+        #Create sandbox
+        node $GITHUB_ACTION_PATH/dist/create-sandbox/index.js $sandbox_name devhub ${{ inputs.sourceSB  }} ${{ inputs.apexClassId  }}  
+
+
+        echo "SANDBOX_NAME=$sandbox_name" >> "$GITHUB_OUTPUT"
+
+        # Construct the JSON value
+        value="{\"name\":\"$sandbox_name\",\"expiry\":\"${{ inputs.daysToKeep }}\",\"requester\":\"${{ github.event.issue.user.login }}\",\"email\":\"${{ inputs.email }}\",\"issueNumber\":\"${{ inputs.issue-number }}\",\"status\":\"InProgress\",\"isActive\":\"true\"}"
+
+        # Set the GitHub Action variable
+        gh variable set "${sandbox_name}_DEVSBX" -b "$value" --repo ${{ github.repository }}
+
+
+
+        #Sleep for 60 seconds before the sandbox need to be propoagated
+        sleep 60s
+
+      shell: bash
